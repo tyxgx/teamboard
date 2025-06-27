@@ -1,0 +1,70 @@
+/* Whole page layout */
+.page {
+  background-color: #000;
+  color: white;
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* Card-like container */
+.card {
+  background-color: #111;
+  padding: 40px;
+  border-radius: 20px;
+  box-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+  width: 90%;
+  max-width: 500px;
+  text-align: center;
+}
+
+/* Heading */
+.heading {
+  font-size: 36px;
+  margin-bottom: 10px;
+}
+
+/* Tagline */
+.tagline {
+  font-size: 16px;
+  color: #ccc;
+  margin-bottom: 25px;
+}
+
+/* Google button */
+.google-btn {
+  background-color: #db4437;
+  color: white;
+  border: none;
+  padding: 12px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-bottom: 20px;
+  font-weight: bold;
+}
+
+.google-btn:hover {
+  background-color: #c3332e;
+}
+
+/* Action buttons */
+.button-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.action-btn {
+  background-color: #444;
+  color: white;
+  border: none;
+  padding: 12px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+.action-btn:hover {
+  background-color: #666;
+}
