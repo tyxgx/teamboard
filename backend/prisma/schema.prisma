@@ -28,6 +28,7 @@ model Board {
   createdByUser User              @relation("UserCreatedBoards", fields: [createdBy], references: [id])
   comments      Comment[]
   members       BoardMembership[]
+  adminId   String?
 }
 
 model BoardMembership {
