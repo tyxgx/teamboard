@@ -1,0 +1,13 @@
+
+error when startinerrov server:
+TypeError: crypto.hash is not a functioTypeError: crypto.hash is not a functioTypeError: crard/frontend/node_modules/vite/dist/node/chunks/dep-DPTTEEJb.js:2788:21)
+    at getLockfileHash (file:///Users/uttkarshtyagi/teamboa    at getLockfileHash (file:///Users/uttkarshtyagi/teaEE    at getLockfileHash (file:///Users/uttkarshtyagi/arshtyagi/teamboard/frontend/node_modules/vite/dist/node/chunks/dep-DPTTEEJb.js:11673:23)
+    at initDepsOptimizerMetadata (file:///    at initDepsOptimizerMetadata (file:/// _m    at initDepsOptimizerMetadata (file:///    at initDepsOptimizeateDepsOptimizer (file:///Users/uttkarshtyagi/teamboard/frontend/node_modules/vite/dist/node/chunks/dep-DPTTEEJb.js:34583:17)
+    at new DevEnvironment (file:///Users/uttkarshtyagi/teamboard/frontend/node_modules/vite/dist/node/chunks/dep-DPTTEEJb.js:35347:109)
+    at Object.defaultCreateClientDevEnvironment [as createEnvironment] (file:///Users/uttkarshtyagi/teamboard/frontend/node_modules/vite/dist/node/chunks/dep-DPTTEEJb.js:35766:9)
+    at _createServer (file:///Users/uttkarshtyagi/teamboard/frontend/node_modules/vite/dist/node/chunks/dep-DPTTEEJb.js:28341:132)
+    at async CAC.<anonymous> (file:///Users/uttkarshtyagi/teamboard/frontend/node_modules/vite/dist/node/cli.js:573:18)
+uttkarshtyagi@Uttkarshs-MacBook-Air frontend % nvm --version
+0.39.7
+uttkarshtyagi@Uttkarshs-MacBook-Air frontend % 
+[201~
