@@ -1,226 +1,148 @@
-import React, { useEffect, useState } from "react";
-import { GoogleLogin } from "@react-oauth/google";
-import type { CredentialResponse } from "@react-oauth/google";
+import { useEffect, useState } from "react";
 import axios from "axios";
-import { useNavigate } from "react-router-dom";
 
-export default function App() {
+const BACKEND = import.meta.env.VITE_BACKEND_URL;
+
+function App() {
   const [user, setUser] = useState<{ name: string; email: string } | null>(null);
-  const [showModal, setShowModal] = useState(false);
   const [boardName, setBoardName] = useState("");
-  const [loading, setLoading] = useState(false);
   const [joinCode, setJoinCode] = useState("");
-  const navigate = useNavigate();
 
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (!token) return;
+
     axios
-      .get("http://localhost:5001/api/test-auth", {
+      .get(`${BACKEND}/api/test-auth`, {
         headers: { Authorization: `Bearer ${token}` },
       })
-      .then((res) =>
-        setUser({ name: res.data.user.name, email: res.data.user.email })
-      )
+      .then((res) => {
+        setUser({ name: res.data.user.name, email: res.data.user.email });
+      })
       .catch(() => setUser(null));
   }, []);
 
-  const handleGoogleSuccess = async (credentialResponse: CredentialResponse) => {
-    const idToken = credentialResponse.credential;
-    if (!idToken) {
-      alert("No ID token from Google!");
-      return;
-    }
-
+  const handleCallbackResponse = async (response: { credential: string; select_by: string }) => {
     try {
-      const res = await axios.post(
-        "http://localhost:5001/api/auth/google",
-        { idToken }
-      );
-      localStorage.setItem("token", res.data.token);
+      const idToken = response.credential;
 
-      const userRes = await axios.get("http://localhost:5001/api/test-auth", {
-        headers: { Authorization: `Bearer ${res.data.token}` },
+      const res = await axios.post(`${BACKEND}/api/auth/google`, { idToken });
+      const token = res.data.token;
+
+      localStorage.setItem("token", token);
+
+      const userRes = await axios.get(`${BACKEND}/api/test-auth`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
+
       setUser({
         name: userRes.data.user.name,
         email: userRes.data.user.email,
       });
-      alert("Login success! JWT saved to localStorage.");
-    } catch (err: any) {
-      alert("Backend auth failed: " + (err?.response?.data?.message || err.message));
+    } catch (error) {
+      console.error("Google login error:", error);
     }
   };
 
-  const handleGoogleError = () => {
-    alert("Google Sign-In Failed");
-  };
+  useEffect(() => {
+    /* global google */
+    google.accounts.id.initialize({
+      client_id: "598932105793-3fgks7miilt50laag0ppkf4ln6qgs6u9.apps.googleusercontent.com",
+      callback: handleCallbackResponse,
+    });
+
+    google.accounts.id.renderButton(document.getElementById("signInDiv")!, {
+        type: "standard",       // 👈 Add this line
+
+      theme: "outline",
+      size: "large",
+    });
+  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem("token");
     setUser(null);
   };
 
-  const handleModalSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      const token = localStorage.getItem("token");
-      const res = await axios.post(
-        "http://localhost:5001/api/boards",
-        { name: boardName },
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
-      alert(`✅ Board Created: ${res.data.name} (Code: ${res.data.code})`);
-      setShowModal(false);
-      setBoardName("");
-      navigate(`/board/${res.data.code}`);
-    } catch (err: any) {
-      alert("❌ Board create failed: " + (err?.response?.data?.message || err.message));
-    } finally {
-      setLoading(false);
-    }
+  const handleCreateBoard = async () => {
+    const token = localStorage.getItem("token");
+    if (!token || !boardName.trim()) return;
+
+    const res = await axios.post(
+      `${BACKEND}/api/boards`,
+      { name: boardName },
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+
+    window.location.href = `/board/${res.data.code}`;
   };
 
   const handleJoinBoard = async () => {
-    if (!joinCode.trim()) return;
     const token = localStorage.getItem("token");
-    try {
-      const res = await axios.post(
-        "http://localhost:5001/api/boards/join",
-        { code: joinCode.trim() },
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      );
-      alert(`✅ Joined board: ${res.data.name}`);
-      setJoinCode("");
-      navigate(`/board/${joinCode.trim()}`);
-    } catch (err: any) {
-      alert("❌ Failed to join board: " + (err?.response?.data?.message || err.message));
-    }
+    if (!token || !joinCode.trim()) return;
+
+    const res = await axios.post(
+      `${BACKEND}/api/boards/join`,
+      { code: joinCode.trim() },
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+
+    window.location.href = `/board/${res.data.code}`;
   };
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        flexDirection: "column",
-      }}
-    >
-      <h1>TeamBoard</h1>
+    <div className="min-h-screen flex flex-col justify-center items-center bg-gray-50 p-4">
+      <h1 className="text-4xl font-bold mb-6">TeamBoard</h1>
 
-      {user ? (
+      {!user ? (
+        <div id="signInDiv" className="mb-4"></div>
+      ) : (
         <>
-          <h2>Welcome, {user.name}!</h2>
-          <p>
-            You are logged in as <b>{user.email}</b>
-          </p>
-          <div style={{ marginTop: 24, display: "flex", gap: 16, alignItems: "center" }}>
-            <button onClick={() => setShowModal(true)} style={{ padding: "8px 16px" }}>+ New Board</button>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <input
-                type="text"
-                placeholder="Enter a code or link"
-                value={joinCode}
-                onChange={(e) => setJoinCode(e.target.value)}
-                style={{ padding: "8px", borderRadius: "8px", border: "1px solid #ccc" }}
-              />
-              <button onClick={handleJoinBoard} style={{ padding: "8px 16px" }}>
-                Join
-              </button>
-            </div>
+          <p className="mb-4">Welcome, {user.name}</p>
+          <button
+            onClick={handleLogout}
+            className="mb-4 px-4 py-2 bg-red-500 text-white rounded"
+          >
+            Logout
+          </button>
+
+          <div className="flex flex-col space-y-4 w-full max-w-xs">
+            <input
+              type="text"
+              placeholder="Enter Board Name"
+              value={boardName}
+              onChange={(e) => setBoardName(e.target.value)}
+              className="p-2 border rounded"
+            />
             <button
-              style={{
-                background: "red",
-                color: "white",
-                border: "none",
-                padding: "8px 16px",
-                borderRadius: "8px",
-              }}
-              onClick={handleLogout}
+              onClick={handleCreateBoard}
+              className="px-4 py-2 bg-blue-500 text-white rounded"
             >
-              Logout
+              Create Board
+            </button>
+
+            <input
+              type="text"
+              placeholder="Enter Join Code"
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value)}
+              className="p-2 border rounded"
+            />
+            <button
+              onClick={handleJoinBoard}
+              className="px-4 py-2 bg-green-500 text-white rounded"
+            >
+              Join Board
             </button>
           </div>
         </>
-      ) : (
-        <GoogleLogin onSuccess={handleGoogleSuccess} onError={handleGoogleError} />
-      )}
-
-      {showModal && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.35)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 9999,
-          }}
-        >
-          <form
-            style={{
-              background: "white",
-              padding: 32,
-              borderRadius: 12,
-              minWidth: 300,
-              boxShadow: "0 4px 24px rgba(0,0,0,0.15)",
-              display: "flex",
-              flexDirection: "column",
-              gap: 16,
-              position: "relative",
-            }}
-            onSubmit={handleModalSubmit}
-          >
-            <h2 style={{ margin: 0 }}>Create Board</h2>
-            <input
-              type="text"
-              placeholder="Enter board name"
-              value={boardName}
-              onChange={(e) => setBoardName(e.target.value)}
-              required
-              style={{ padding: 8, borderRadius: 6, border: "1px solid #ccc" }}
-              disabled={loading}
-            />
-            <div style={{ display: "flex", gap: 12 }}>
-              <button
-                type="button"
-                onClick={() => setShowModal(false)}
-                style={{
-                  padding: "8px 16px",
-                  background: "#eee",
-                  border: "none",
-                  borderRadius: 8,
-                  color: "#333",
-                }}
-                disabled={loading}
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                style={{
-                  padding: "8px 16px",
-                  background: "blue",
-                  border: "none",
-                  borderRadius: 8,
-                  color: "white",
-                }}
-                disabled={loading}
-              >
-                {loading ? "Creating..." : "Create"}
-              </button>
-            </div>
-          </form>
-        </div>
       )}
     </div>
   );
 }
+
+export default App;
