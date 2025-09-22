@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 
+// ✅ Use backend URL from environment variables
 const BACKEND = import.meta.env.VITE_BACKEND_URL;
 
 function App() {
@@ -8,6 +9,7 @@ function App() {
   const [boardName, setBoardName] = useState("");
   const [joinCode, setJoinCode] = useState("");
 
+  // ✅ Fetch user if token exists in localStorage
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (!token) return;
@@ -22,10 +24,12 @@ function App() {
       .catch(() => setUser(null));
   }, []);
 
-  const handleCallbackResponse = async (response: { credential: string; select_by: string }) => {
+  // ✅ Google login callback
+  const handleCallbackResponse = async (response: { credential: string }) => {
     try {
       const idToken = response.credential;
 
+      // ✅ Send token to backend auth route
       const res = await axios.post(`${BACKEND}/api/auth/google`, { idToken });
       const token = res.data.token;
 
@@ -46,17 +50,20 @@ function App() {
 
   useEffect(() => {
     /* global google */
+    // ✅ Initialize Google Sign-In with client ID from env variable
     google.accounts.id.initialize({
-      client_id: "598932105793-3fgks7miilt50laag0ppkf4ln6qgs6u9.apps.googleusercontent.com",
+      client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
       callback: handleCallbackResponse,
     });
 
-    google.accounts.id.renderButton(document.getElementById("signInDiv")!, {
-        type: "standard",       // 👈 Add this line
-
-      theme: "outline",
-      size: "large",
-    });
+    google.accounts.id.renderButton(
+      document.getElementById("signInDiv")!,
+      {
+        type: "standard",
+        theme: "outline",
+        size: "large",
+      }
+    );
   }, []);
 
   const handleLogout = () => {
