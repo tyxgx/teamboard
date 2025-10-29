@@ -2,6 +2,14 @@ import { Request, Response } from 'express';
 import { prisma } from '../db/client';
 import { nanoid } from 'nanoid';
 
+async function isBoardAdmin(userId: string, boardId: string) {
+  const membership = await prisma.boardMembership.findFirst({
+    where: { userId, boardId, role: 'ADMIN' },
+    select: { id: true },
+  });
+  return Boolean(membership);
+}
+
 // ✅ Create a new board (Admin by default)
 export const createBoard = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -54,27 +62,24 @@ export const getBoardById = async (req: Request, res: Response): Promise<void> =
   try {
     const { id } = req.params;
 
+    const admin = await isBoardAdmin(req.user.id, id);
+    const orClauses: any[] = [
+      { visibility: 'EVERYONE' },
+      { createdById: req.user.id },
+    ];
+    if (admin) {
+      orClauses.push({ visibility: 'ADMIN_ONLY' });
+    }
+
     const board = await prisma.board.findUnique({
       where: { id },
       include: {
         members: true,
         comments: {
-          where: {
-            OR: [
-              { visibility: 'EVERYONE' },
-              {
-                AND: [{ visibility: 'ADMIN_ONLY' }, { board: { createdBy: req.user.id } }],
-              },
-              { createdById: req.user.id },
-            ],
-          },
+          where: { OR: orClauses },
           include: {
             createdBy: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-              },
+              select: { id: true, name: true, email: true },
             },
           },
         },
@@ -131,5 +136,30 @@ export const joinBoard = async (req: Request, res: Response): Promise<void> => {
   } catch (error) {
     console.error('❌ Error joining board:', error);
     res.status(500).json({ message: 'Error joining board' });
+  }
+};
+
+// ✅ Get board by invite code (includes minimal data)
+export const getBoardByCode = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { code } = req.params;
+
+    const board = await prisma.board.findUnique({
+      where: { code },
+      include: {
+        members: true,
+        createdByUser: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!board) {
+      res.status(404).json({ message: 'Board not found' });
+      return;
+    }
+
+    res.status(200).json(board);
+  } catch (error) {
+    console.error('❌ Error fetching board by code:', error);
+    res.status(500).json({ message: 'Error fetching board by code' });
   }
 };

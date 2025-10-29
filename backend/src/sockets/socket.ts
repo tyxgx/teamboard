@@ -8,10 +8,12 @@ import http from "http";
 const userMap = new Map<string, { name: string; boardCode: string }>();
 
 export function setupSocket(server: http.Server) {
+  const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "*";
   const io = new Server(server, {
     cors: {
-      origin: "*", // ❗ Replace with actual Vercel frontend URL in prod
+      origin: FRONTEND_ORIGIN === "*" ? true : FRONTEND_ORIGIN.split(",").map((s) => s.trim()),
       methods: ["GET", "POST"],
+      credentials: true,
     },
   });
 
@@ -26,7 +28,9 @@ export function setupSocket(server: http.Server) {
     });
 
     socket.on("send-message", ({ boardCode, message, sender, visibility, actualSender }) => {
-      const dataToSend = { message, sender, visibility: visibility || "public", actualSender };
+      // Normalize visibility to match API enums
+      const normalizedVisibility = visibility === "ADMIN_ONLY" ? "ADMIN_ONLY" : "EVERYONE";
+      const dataToSend = { message, sender, visibility: normalizedVisibility, actualSender };
       io.to(boardCode).emit("receive-message", dataToSend);
     });
 

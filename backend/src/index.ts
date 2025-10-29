@@ -1,22 +1,15 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import fs from 'fs';
+// no fs logging of envs in production
 import { swaggerUi, swaggerSpec } from './swagger';
 import testRoutes from './routes/test'; // ✅ ADD this line
 
 dotenv.config();
 
-console.log('✅ JWT_SECRET loaded:', process.env.JWT_SECRET || '[undefined]');
-
-if (fs.existsSync('.env')) {
-  console.log('📄 Raw .env contents:\n', fs.readFileSync('.env', 'utf8'));
-} else {
-  console.log('⚠️ .env file not found – likely running in production.');
-}
-
+// Avoid logging secrets or raw .env in any environment
 if (!process.env.JWT_SECRET) {
-  console.warn('⚠️ JWT_SECRET is not defined in .env file! Authentication will fail.');
+  console.warn('⚠️ JWT_SECRET is not defined. Authentication will fail.');
 }
 
 import authRoutes from './routes/auth.routes';
@@ -25,7 +18,15 @@ import commentRoutes from './routes/comment.routes';
 import userRoutes from './routes/user.routes';
 
 const app = express();
-app.use(cors());
+
+// Restrict CORS via env; default to permissive for local dev
+const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || '*';
+app.use(
+  cors({
+    origin: FRONTEND_ORIGIN === '*' ? true : FRONTEND_ORIGIN.split(',').map((s) => s.trim()),
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 // ✅ Health check

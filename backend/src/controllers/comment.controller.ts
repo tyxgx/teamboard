@@ -1,11 +1,17 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../db/client';
 
-const prisma = new PrismaClient();
+async function isBoardAdmin(userId: string, boardId: string) {
+  const membership = await prisma.boardMembership.findFirst({
+    where: { userId, boardId, role: 'ADMIN' },
+    select: { id: true },
+  });
+  return Boolean(membership);
+}
 
 export const createComment = async (req: Request, res: Response) => {
   try {
-    const { content, visibility, boardId } = req.body;
+    const { content, visibility, boardId, anonymous = false } = req.body;
 
     const board = await prisma.board.findUnique({
       where: { id: boardId },
@@ -16,7 +22,8 @@ export const createComment = async (req: Request, res: Response) => {
       return;
     }
 
-    if (visibility === 'ADMIN_ONLY' && req.user.role !== 'ADMIN' && board.adminId !== req.user.id) {
+    // Only board admins can create ADMIN_ONLY comments
+    if (visibility === 'ADMIN_ONLY' && !(await isBoardAdmin(req.user.id, boardId))) {
       res.status(403).json({
         message: 'Only admins can create admin-only comments',
       });
@@ -29,6 +36,7 @@ export const createComment = async (req: Request, res: Response) => {
         visibility,
         createdById: req.user.id,
         boardId,
+        anonymous,
       },
       include: {
         createdBy: {
@@ -50,28 +58,40 @@ export const getComments = async (req: Request, res: Response) => {
   try {
     const { boardId } = req.params;
 
+    const admin = await isBoardAdmin(req.user.id, boardId);
+
+    const orClauses: any[] = [
+      { visibility: 'EVERYONE' },
+      { createdById: req.user.id },
+    ];
+    if (admin) {
+      orClauses.push({ visibility: 'ADMIN_ONLY' });
+    }
+
     const comments = await prisma.comment.findMany({
-      where: {
-        boardId,
-        OR: [
-          { visibility: 'EVERYONE' },
-          {
-            AND: [{ visibility: 'ADMIN_ONLY' }, { board: { adminId: req.user.id } }],
-          },
-          { createdById: req.user.id },
-        ],
-      },
+      where: { boardId, OR: orClauses },
       include: {
-        createdBy: {
-          select: {
-            id: true,
-            name: true,
-          },
-        },
+        createdBy: { select: { id: true, name: true } },
       },
+      orderBy: { id: 'asc' },
     });
 
-    res.json(comments);
+    // Shape messages similar to socket events, applying anonymity rules
+    const shaped = comments.map((c) => {
+      const isOwn = c.createdById === req.user.id;
+      const maskedToOthers = c.anonymous && !admin && !isOwn;
+      const sender = maskedToOthers ? 'Anonymous' : c.createdBy.name;
+      const actualSender = c.anonymous && admin ? c.createdBy.name : undefined;
+      return {
+        id: c.id,
+        message: c.content,
+        visibility: c.visibility as 'EVERYONE' | 'ADMIN_ONLY',
+        sender,
+        actualSender,
+      };
+    });
+
+    res.json(shaped);
   } catch (error) {
     res.status(500).json({ message: 'Error fetching comments' });
   }

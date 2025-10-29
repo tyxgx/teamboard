@@ -49,6 +49,42 @@
 
 ---
 
+## 🚀 Supabase (Postgres) Setup
+
+Supabase is fully compatible (Prisma + Postgres). To switch:
+
+1) Create a Supabase project → Settings ▸ Database → copy the connection string(s)
+
+2) Set backend `.env` (see `.env.example`):
+
+```
+DATABASE_URL=postgresql://...  # Supabase connection string
+DIRECT_URL=postgresql://...    # (if provided)
+JWT_SECRET=replace-with-long-random-string
+GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+FRONTEND_ORIGIN=http://localhost:5173
+PORT=5001
+```
+
+3) Generate client and sync schema:
+
+```
+pnpm install
+npx prisma generate
+# If you have migrations committed:
+npx prisma migrate deploy
+# If no migrations yet and you just want the schema:
+npx prisma db push
+```
+
+4) Verify DB tables exist in Supabase and the API runs locally.
+
+Notes:
+- Board admin is determined via `BoardMembership.role === 'ADMIN'`. The old `Board.adminId` field has been removed.
+- CORS and Socket.IO origins are controlled by `FRONTEND_ORIGIN` (comma-separated list for multiple origins).
+
+---
+
 ## **🐳 Docker Setup**
 
 ### 1. Build & Run locally

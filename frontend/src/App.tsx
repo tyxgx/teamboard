@@ -98,7 +98,8 @@ function App() {
       }
     );
 
-    window.location.href = `/board/${res.data.code}`;
+    const code = res.data?.board?.code || res.data?.code;
+    window.location.href = `/board/${code}`;
   };
 
   return (

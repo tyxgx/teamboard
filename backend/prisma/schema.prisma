@@ -29,7 +29,6 @@ model Board {
   createdByUser User              @relation("UserCreatedBoards", fields: [createdBy], references: [id])
   comments      Comment[]
   members       BoardMembership[]
-  adminId   String?
 }
 
 model BoardMembership {
@@ -50,6 +49,7 @@ model Comment {
   visibility  Visibility
   createdById String
   boardId     String
+  anonymous   Boolean    @default(false)
 
   createdBy User  @relation(fields: [createdById], references: [id])
   board     Board @relation(fields: [boardId], references: [id])
