@@ -286,6 +286,38 @@ export const getBoardByCode = async (req: Request, res: Response): Promise<void>
     const membership = board.members.find((member) => member.userId === req.user.id);
     ensureMembershipExists(membership);
 
+    const admin = isAdmin(req.user.id, board, membership!);
+    const orClauses: any[] = [
+      { visibility: 'EVERYONE' },
+      { createdById: req.user.id },
+    ];
+    if (admin) {
+      orClauses.push({ visibility: 'ADMIN_ONLY' });
+    }
+
+    const comments = await prisma.comment.findMany({
+      where: { boardId: board.id, OR: orClauses },
+      include: {
+        createdBy: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const shapedComments = comments.map((comment) => {
+      const isOwn = comment.createdById === req.user.id;
+      const maskedToOthers = comment.anonymous && !admin && !isOwn;
+      return {
+        id: comment.id,
+        message: comment.content,
+        visibility: comment.visibility,
+        sender: maskedToOthers ? 'Anonymous' : comment.createdBy.name,
+        actualSender: comment.anonymous && admin ? comment.createdBy.name : undefined,
+        createdAt: comment.createdAt,
+        userId: comment.createdById,
+        senderId: comment.createdById,
+      };
+    });
+
     res.status(200).json({
       id: board.id,
       name: board.name,
@@ -293,6 +325,7 @@ export const getBoardByCode = async (req: Request, res: Response): Promise<void>
       anonymousEnabled: board.anonymousEnabled,
       lastActivity: board.lastActivity,
       members: board.members,
+       comments: shapedComments,
       membershipRole: membership!.role,
       isCreator: board.createdBy === req.user.id,
     });

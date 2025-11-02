@@ -41,6 +41,7 @@ type BoardDetails = {
   members: BoardMember[];
   membershipRole: "ADMIN" | "MEMBER";
   isCreator: boolean;
+  comments?: ChatMessage[];
 };
 
 type ModalState = {
@@ -73,6 +74,7 @@ export default function BoardRoomPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const isAdminRef = useRef(false);
   const joinedBoardsRef = useRef<Set<string>>(new Set());
+  const pendingMessagesRef = useRef<Set<string>>(new Set());
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [commentsError, setCommentsError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -182,14 +184,7 @@ export default function BoardRoomPage() {
         setCommentsError(null);
         const details = await loadBoardDetails(boardCode);
         if (!details || !active) return;
-        try {
-          await loadComments(details.id);
-        } catch (error) {
-          console.warn("Failed to load comments history", error);
-          if (!active) return;
-          setCommentsError("Couldn't load previous messages. You can still chat.");
-          setMessages([]);
-        }
+        setMessages(details.comments ?? []);
       } catch (error) {
         console.error("Unable to fetch board details", error);
         if (active) {
@@ -219,10 +214,14 @@ export default function BoardRoomPage() {
   useEffect(() => {
     const socket = socketClient;
 
-    const handleReceiveMessage = (data: ChatMessage & { senderId?: string }) => {
+    const handleReceiveMessage = (data: ChatMessage & { senderId?: string; clientMessageId?: string }) => {
       const isOwnAdminOnly =
         data.visibility === "ADMIN_ONLY" && data.senderId && data.senderId === user?.id;
       if (data.visibility === "ADMIN_ONLY" && !isAdminRef.current && !isOwnAdminOnly) return;
+      if (data.clientMessageId && data.senderId === user?.id && pendingMessagesRef.current.has(data.clientMessageId)) {
+        pendingMessagesRef.current.delete(data.clientMessageId);
+        return;
+      }
       setMessages((prev) => [
         ...prev,
         {
@@ -303,15 +302,34 @@ export default function BoardRoomPage() {
   }, [boardCode, boardDetails?.code, loadBoardDetails, navigate, removeBoardFromState, updateBoardMeta, user?.id]);
 
   const handleSendMessage = async () => {
-    if (!message.trim() || !user || !boardCode || !boardId) return;
+    const content = message.trim();
+    if (!content || !user || !boardCode || !boardId) return;
+
+    const createdAt = new Date().toISOString();
+    const clientMessageId = `client-${Date.now()}`;
+    pendingMessagesRef.current.add(clientMessageId);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: clientMessageId,
+        message: content,
+        sender: anonymousMode ? "Anonymous" : user.name,
+        actualSender: user.name,
+        visibility,
+        createdAt,
+        senderId: user.id,
+        userId: user.id,
+      },
+    ]);
 
     socketClient.emit("send-message", {
       boardCode,
-      message,
+      message: content,
       visibility,
       sender: anonymousMode ? "Anonymous" : user.name,
       actualSender: user.name,
       senderId: user.id,
+      clientMessageId,
     });
 
     updateBoardMeta(boardCode, { lastActivity: new Date().toISOString() });
@@ -321,7 +339,7 @@ export default function BoardRoomPage() {
       try {
         await axios.post(
           `${BACKEND}/api/comments`,
-          { content: message, visibility, boardId, anonymous: anonymousMode },
+          { content, visibility, boardId, anonymous: anonymousMode },
           { headers }
         );
       } catch (error) {

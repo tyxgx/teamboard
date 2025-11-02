@@ -38,10 +38,10 @@ export function setupSocket(server: http.Server) {
       socket.to(boardCode).emit("user-joined", { name });
     });
 
-    socket.on("send-message", ({ boardCode, message, sender, visibility, actualSender, senderId }) => {
+    socket.on("send-message", ({ boardCode, message, sender, visibility, actualSender, senderId, clientMessageId }) => {
       // Normalize visibility to match API enums
       const normalizedVisibility = visibility === "ADMIN_ONLY" ? "ADMIN_ONLY" : "EVERYONE";
-      const dataToSend = { message, sender, visibility: normalizedVisibility, actualSender, senderId };
+      const dataToSend = { message, sender, visibility: normalizedVisibility, actualSender, senderId, clientMessageId };
       io.to(boardCode).emit("receive-message", dataToSend);
     });
 
