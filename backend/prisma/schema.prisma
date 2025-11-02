@@ -25,6 +25,8 @@ model Board {
   name          String
   code          String            @unique // Unique invite code
   createdAt     DateTime          @default(now())
+  lastActivity  DateTime          @default(now())
+  anonymousEnabled Boolean       @default(false)
   createdBy     String
   createdByUser User              @relation("UserCreatedBoards", fields: [createdBy], references: [id])
   comments      Comment[]
@@ -36,6 +38,7 @@ model BoardMembership {
   userId  String
   boardId String
   role    Role   @default(MEMBER)
+  pinned  Boolean @default(false)
 
   user  User  @relation(fields: [userId], references: [id])
   board Board @relation(fields: [boardId], references: [id])
@@ -50,6 +53,7 @@ model Comment {
   createdById String
   boardId     String
   anonymous   Boolean    @default(false)
+  createdAt   DateTime   @default(now())
 
   createdBy User  @relation(fields: [createdById], references: [id])
   board     Board @relation(fields: [boardId], references: [id])

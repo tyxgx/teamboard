@@ -1,0 +1,203 @@
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { MessageBubble } from "./MessageBubble";
+
+export type ChatMessage = {
+  id?: string;
+  sender: string;
+  actualSender?: string;
+  message: string;
+  visibility: "EVERYONE" | "ADMIN_ONLY";
+  createdAt?: string;
+  system?: boolean;
+  userId?: string;
+  senderId?: string;
+};
+
+type MessageListProps = {
+  messages: ChatMessage[];
+  isAdmin: boolean;
+  currentUserId?: string;
+  currentUserName?: string;
+  typingIndicator?: string[];
+  isLoading?: boolean;
+  onLoadOlder?: () => void;
+};
+
+const humanizeDate = (timestamp?: string) => {
+  if (!timestamp) return "";
+  const target = new Date(timestamp);
+  if (Number.isNaN(target.getTime())) return "";
+
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+  if (sameDay(target, today)) return "Today";
+  if (sameDay(target, yesterday)) return "Yesterday";
+
+  return target.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+};
+
+export const MessageList = ({
+  messages,
+  isAdmin,
+  currentUserId,
+  currentUserName,
+  typingIndicator = [],
+  isLoading = false,
+  onLoadOlder,
+}: MessageListProps) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const topSentinelRef = useRef<HTMLDivElement>(null);
+  const [nearBottom, setNearBottom] = useState(true);
+  const [observingTop, setObservingTop] = useState(false);
+
+  const scrollToBottom = (behavior: ScrollBehavior = "smooth") => {
+    const el = containerRef.current;
+    if (!el) return;
+    requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior });
+    });
+  };
+
+  const updateNearBottom = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    const distance = el.scrollHeight - (el.scrollTop + el.clientHeight);
+    setNearBottom(distance <= 120);
+  };
+
+  useEffect(() => {
+    updateNearBottom();
+  }, []);
+
+  useEffect(() => {
+    if (nearBottom) {
+      scrollToBottom(messages.length <= 2 ? "auto" : "smooth");
+    }
+  }, [messages, typingIndicator, nearBottom]);
+
+  useEffect(() => {
+    if (!onLoadOlder || observingTop) return;
+    const sentinel = topSentinelRef.current;
+    const container = containerRef.current;
+    if (!sentinel || !container) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          onLoadOlder();
+        }
+      },
+      {
+        root: container,
+        threshold: 1,
+      }
+    );
+
+    observer.observe(sentinel);
+    setObservingTop(true);
+
+    return () => {
+      observer.disconnect();
+      setObservingTop(false);
+    };
+  }, [onLoadOlder, observingTop]);
+
+  const grouped = useMemo(() => {
+    const buckets: Record<string, ChatMessage[]> = {};
+    messages.forEach((msg) => {
+      const key = humanizeDate(msg.createdAt) || "";
+      if (!buckets[key]) buckets[key] = [];
+      buckets[key].push(msg);
+    });
+    return Object.entries(buckets);
+  }, [messages]);
+
+  return (
+    <div className="relative flex-1 overflow-hidden">
+      <div
+        ref={containerRef}
+        onScroll={updateNearBottom}
+        className="h-full overflow-y-auto bg-white px-6 py-6"
+        style={{ scrollBehavior: "smooth" }}
+      >
+        <div ref={topSentinelRef} />
+        <div className="mx-auto flex max-w-3xl flex-col gap-4">
+          {isLoading ? (
+            <div className="py-16 text-center text-sm text-slate-400">Loading conversation…</div>
+          ) : grouped.length === 0 ? (
+            <div className="py-20 text-center text-sm text-slate-400">No messages yet. Start the conversation!</div>
+          ) : (
+            grouped.map(([label, bucket]) => (
+              <Fragment key={label || bucket[0]?.id || Math.random().toString()}>
+                {label ? (
+                  <div className="relative my-3 flex items-center justify-center text-xs uppercase tracking-wider text-slate-400">
+                    <span className="z-10 rounded-full bg-slate-100 px-3 py-1 shadow-sm">{label}</span>
+                    <span className="absolute inset-x-0 h-px bg-slate-200" aria-hidden />
+                  </div>
+                ) : null}
+                <div className="flex flex-col gap-3">
+                  {bucket.map((msg, index) => {
+                    if (msg.system) {
+                      return (
+                        <div
+                          key={msg.id ?? `${label}-${index}`}
+                          className="mx-auto max-w-sm rounded-full bg-slate-100 px-4 py-2 text-center text-xs font-semibold text-slate-500"
+                        >
+                          {msg.message}
+                        </div>
+                      );
+                    }
+
+                    const actualName = msg.actualSender && isAdmin ? msg.actualSender : undefined;
+                    const displayName = msg.sender === "Anonymous" && actualName ? `${msg.sender} (${actualName})` : msg.sender;
+                    const comparableName = actualName ?? msg.sender;
+                    const isOwnById =
+                      currentUserId && (msg.userId === currentUserId || msg.senderId === currentUserId);
+                    const isOwnByName = comparableName && currentUserName ? comparableName === currentUserName : false;
+                    const isOwn = Boolean(isOwnById || isOwnByName);
+                    const createdAt = msg.createdAt ?? new Date().toISOString();
+
+                    return (
+                      <MessageBubble
+                        key={msg.id ?? `${label}-${index}`}
+                        isOwn={isOwn}
+                        isAnonymous={msg.sender === "Anonymous"}
+                        audience={msg.visibility}
+                        authorName={displayName}
+                        actualSender={actualName}
+                        timestamp={createdAt}
+                      >
+                        {msg.message}
+                      </MessageBubble>
+                    );
+                  })}
+                </div>
+              </Fragment>
+            ))
+          )}
+
+          {typingIndicator.length ? (
+            <div className="ml-12 max-w-max rounded-full bg-slate-100 px-4 py-2 text-xs text-slate-500">
+              {typingIndicator.join(", ")} typing…
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {!nearBottom && (
+        <button
+          type="button"
+          onClick={() => scrollToBottom("smooth")}
+          className="absolute bottom-6 right-6 rounded-full bg-emerald-500 px-4 py-2 text-xs font-semibold text-white shadow-lg transition hover:bg-emerald-600"
+        >
+          Jump to latest
+        </button>
+      )}
+    </div>
+  );
+};
