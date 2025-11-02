@@ -206,7 +206,12 @@ export const Sidebar: FC<SidebarProps> = ({
                         Mark as unread
                       </MenuItem>
                       <MenuItem onClick={() => handleLeave(board)}>Leave board</MenuItem>
-                      <MenuItem onClick={() => handleDelete(board)}>Delete board</MenuItem>
+                      <MenuItem
+                        onClick={() => handleDelete(board)}
+                        disabled={!isAdmin}
+                      >
+                        Delete board
+                      </MenuItem>
                     </div>
                   ) : null}
                 </div>
