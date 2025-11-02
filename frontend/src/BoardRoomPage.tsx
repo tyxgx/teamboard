@@ -493,7 +493,9 @@ export default function BoardRoomPage() {
 
         <RightPanel
           boardCode={boardCode ?? ""}
-          adminName={boardDetails?.members.find((member) => member.role === "ADMIN")?.user.name}
+          adminName={
+            boardDetails?.members?.find((member) => member.role === "ADMIN")?.user?.name || "Admin"
+          }
           members={boardDetails?.members ?? []}
           isAdmin={isAdmin}
           anonymousEnabled={boardDetails?.anonymousEnabled ?? currentBoardSummary?.anonymousEnabled ?? false}
