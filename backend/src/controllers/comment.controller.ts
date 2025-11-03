@@ -5,17 +5,21 @@ import { getIO } from '../sockets/socket';
 async function getMembership(userId: string, boardId: string) {
   return prisma.boardMembership.findUnique({
     where: { userId_boardId: { userId, boardId } },
-    select: { role: true },
+    select: {
+      role: true,
+      status: true,
+      leftAt: true,
+    },
   });
 }
 
 export const createComment = async (req: Request, res: Response) => {
   try {
-    const { content, visibility, boardId, anonymous = false } = req.body;
+    const { content, visibility, boardId, anonymous = false, clientMessageId } = req.body;
 
     const board = await prisma.board.findUnique({
       where: { id: boardId },
-      select: { id: true, code: true, createdBy: true, anonymousEnabled: true },
+      select: { id: true, code: true, createdBy: true, anonymousEnabled: true, lastActivity: true },
     });
 
     if (!board) {
@@ -26,6 +30,11 @@ export const createComment = async (req: Request, res: Response) => {
     const membership = await getMembership(req.user.id, boardId);
     if (!membership) {
       res.status(403).json({ message: 'You are not a member of this board' });
+      return;
+    }
+
+    if (membership.status !== 'ACTIVE') {
+      res.status(403).json({ message: 'You left this board. Rejoin to post.' });
       return;
     }
 
@@ -64,17 +73,58 @@ export const createComment = async (req: Request, res: Response) => {
       },
     });
 
+    const previewSource = content.trim().length > 0 ? content.trim() : content;
+    const preview = previewSource.slice(0, 140);
+
     const updatedBoard = await prisma.board.update({
       where: { id: boardId },
-      data: { lastActivity: new Date() },
-      select: { code: true, lastActivity: true },
+      data: {
+        lastActivity: comment.createdAt,
+        lastCommentAt: comment.createdAt,
+        lastCommentPreview: preview,
+        lastCommentVisibility: comment.visibility,
+        lastCommentAnonymous: comment.anonymous,
+        lastCommentSenderId: req.user.id,
+      },
+      select: {
+        code: true,
+        lastActivity: true,
+        lastCommentAt: true,
+        lastCommentPreview: true,
+        lastCommentVisibility: true,
+        lastCommentAnonymous: true,
+        lastCommentSenderId: true,
+      },
     });
 
     try {
+      const senderDisplay = comment.anonymous ? 'Anonymous' : comment.createdBy.name;
+      const actualSender = comment.anonymous ? comment.createdBy.name : undefined;
+
       getIO().to(updatedBoard.code).emit('board-activity', {
         boardCode: updatedBoard.code,
         lastActivity: updatedBoard.lastActivity.toISOString(),
+        lastCommentPreview: updatedBoard.lastCommentPreview,
+        lastCommentAt: updatedBoard.lastCommentAt ? updatedBoard.lastCommentAt.toISOString() : null,
+        lastCommentVisibility: updatedBoard.lastCommentVisibility,
+        lastCommentAnonymous: updatedBoard.lastCommentAnonymous,
+        lastCommentSenderId: updatedBoard.lastCommentSenderId,
+        lastCommentSenderName: comment.createdBy.name,
       });
+
+      getIO()
+        .to(updatedBoard.code)
+        .emit('receive-message', {
+          id: comment.id,
+          boardCode: updatedBoard.code,
+          message: comment.content,
+          visibility: comment.visibility,
+          sender: senderDisplay,
+          actualSender,
+          createdAt: comment.createdAt.toISOString(),
+          senderId: req.user.id,
+          clientMessageId: clientMessageId ?? null,
+        });
     } catch (error) {
       console.warn('Socket not initialised when emitting board-activity', error);
     }
@@ -104,7 +154,9 @@ export const getComments = async (req: Request, res: Response) => {
       return;
     }
 
-    const admin = board.createdBy === req.user.id || membership.role === 'ADMIN';
+    const isLeft = membership.status === 'LEFT';
+    const leftCutoff = isLeft && membership.leftAt ? membership.leftAt : null;
+    const admin = !isLeft && (board.createdBy === req.user.id || membership.role === 'ADMIN');
 
     const orClauses: any[] = [
       { visibility: 'EVERYONE' },
@@ -114,12 +166,38 @@ export const getComments = async (req: Request, res: Response) => {
       orClauses.push({ visibility: 'ADMIN_ONLY' });
     }
 
+    const sinceRaw = Array.isArray(req.query.since) ? req.query.since[0] : req.query.since;
+    let sinceDate: Date | null = null;
+    if (sinceRaw) {
+      const parsed = new Date(String(sinceRaw));
+      if (!Number.isNaN(parsed.getTime())) {
+        sinceDate = parsed;
+      }
+    }
+
+    const createdAtFilter: { gt?: Date; lte?: Date } = {};
+    if (sinceDate) {
+      createdAtFilter.gt = sinceDate;
+    }
+    if (leftCutoff) {
+      createdAtFilter.lte = leftCutoff;
+    }
+
+    const commentWhere: any = {
+      boardId,
+      OR: orClauses,
+    };
+
+    if (Object.keys(createdAtFilter).length > 0) {
+      commentWhere.createdAt = createdAtFilter;
+    }
+
     const comments = await prisma.comment.findMany({
-      where: { boardId, OR: orClauses },
+      where: commentWhere,
       include: {
         createdBy: { select: { id: true, name: true } },
       },
-      orderBy: { id: 'asc' },
+      orderBy: { createdAt: 'asc' },
     });
 
     // Shape messages similar to socket events, applying anonymity rules

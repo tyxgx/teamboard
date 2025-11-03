@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL as string;
+const REDIRECT_KEY = 'tb.redirect';
 
 export default function Landing() {
   const [user, setUser] = useState<{ name: string; email: string } | null>(null);
@@ -11,6 +13,7 @@ export default function Landing() {
   const [authenticating, setAuthenticating] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const buttonRenderedRef = useRef(false);
+  const navigate = useNavigate();
 
   // If token exists, fetch user
   useEffect(() => {
@@ -80,7 +83,12 @@ export default function Landing() {
 
   const handleLogout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem(REDIRECT_KEY);
+    localStorage.removeItem('tb.hiddenBoards');
+    localStorage.removeItem('tb.unreadByBoard');
+    localStorage.removeItem('tb.lastBoardCode');
     setUser(null);
+    navigate('/');
   };
 
   const handleCreateBoard = async () => {
@@ -93,7 +101,7 @@ export default function Landing() {
         { name: boardName.trim() },
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      window.location.href = `/board/${res.data.code}`;
+      navigate(`/board/${res.data.code}`);
     } catch (e) {
       setCreating(false);
     }
@@ -109,11 +117,22 @@ export default function Landing() {
         { headers: { Authorization: `Bearer ${token}` } }
       );
       const code = res.data?.board?.code || res.data?.code;
-      window.location.href = `/board/${code}`;
+      navigate(`/board/${code}`);
     } catch (e) {
       // ignore
     }
   };
+
+  useEffect(() => {
+    if (!user) return;
+    const redirect = localStorage.getItem(REDIRECT_KEY);
+    if (redirect) {
+      localStorage.removeItem(REDIRECT_KEY);
+      navigate(redirect);
+    } else {
+      navigate('/app');
+    }
+  }, [user, navigate]);
 
   return (
     <main style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>

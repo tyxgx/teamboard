@@ -36,13 +36,11 @@ export function setupSocket(server: http.Server) {
       userMap.set(socket.id, { name, boardCode });
       console.log(`📥 ${name} joined board: ${boardCode}`);
       socket.to(boardCode).emit("user-joined", { name });
+      socket.emit("joined-room", { boardCode });
     });
 
-    socket.on("send-message", ({ boardCode, message, sender, visibility, actualSender, senderId, clientMessageId }) => {
-      // Normalize visibility to match API enums
-      const normalizedVisibility = visibility === "ADMIN_ONLY" ? "ADMIN_ONLY" : "EVERYONE";
-      const dataToSend = { message, sender, visibility: normalizedVisibility, actualSender, senderId, clientMessageId };
-      io.to(boardCode).emit("receive-message", dataToSend);
+    socket.on("send-message", () => {
+      // No-op: REST pipeline broadcasts messages to avoid duplicates.
     });
 
     socket.on("disconnect", () => {

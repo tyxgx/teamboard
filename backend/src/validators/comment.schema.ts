@@ -5,4 +5,5 @@ export const commentSchema = z.object({
   visibility: z.enum(['EVERYONE', 'ADMIN_ONLY']),
   boardId: z.string().uuid('Invalid board ID'),
   anonymous: z.boolean().optional().default(false),
+  clientMessageId: z.string().optional(),
 });

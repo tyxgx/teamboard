@@ -1,52 +1,49 @@
-import { useRef, type ChangeEvent, type FC, type FormEvent, type KeyboardEvent } from "react";
+import { useRef, type ChangeEvent, type KeyboardEvent } from "react";
 
 type Visibility = "EVERYONE" | "ADMIN_ONLY";
 
 type ChatComposerProps = {
-  message: string;
-  onMessageChange: (value: string) => void;
+  value: string;
+  onChange: (value: string) => void;
   onSend: () => void;
   anonymous: boolean;
   onToggleAnonymous: (value: boolean) => void;
   visibility: Visibility;
   onChangeVisibility: (value: Visibility) => void;
   isAnonymousAllowed: boolean;
+  canUseAdminOnly?: boolean;
   disabled?: boolean;
+  readOnly?: boolean;
+  readOnlyMessage?: string;
 };
 
-export const ChatComposer: FC<ChatComposerProps> = ({
-  message,
-  onMessageChange,
+export const ChatComposer = ({
+  value,
+  onChange,
   onSend,
   anonymous,
   onToggleAnonymous,
   visibility,
   onChangeVisibility,
   isAnonymousAllowed,
+  canUseAdminOnly = true,
   disabled = false,
-}) => {
+  readOnly = false,
+  readOnlyMessage,
+}: ChatComposerProps) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const resetTextareaHeight = () => {
+  const trySendMessage = () => {
+    if (disabled || readOnly) return;
+    if (!value.trim()) return;
+    onSend();
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
   };
 
-  const trySendMessage = () => {
-    if (!message.trim() || disabled) return false;
-    onSend();
-    resetTextareaHeight();
-    return true;
-  };
-
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    void trySendMessage();
-  };
-
   const handleInput = (event: ChangeEvent<HTMLTextAreaElement>) => {
-    onMessageChange(event.target.value);
+    onChange(event.target.value);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
       textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
@@ -57,79 +54,88 @@ export const ChatComposer: FC<ChatComposerProps> = ({
     if (event.nativeEvent?.isComposing) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      void trySendMessage();
+      trySendMessage();
     }
   };
 
+  const toggleAnonymous = () => {
+    if (!isAnonymousAllowed || disabled || readOnly) return;
+    onToggleAnonymous(!anonymous);
+  };
+
+  const toggleVisibility = () => {
+    if (disabled || readOnly || !canUseAdminOnly) return;
+    onChangeVisibility(visibility === "EVERYONE" ? "ADMIN_ONLY" : "EVERYONE");
+  };
+
   return (
-    <form onSubmit={handleSubmit} className="shrink-0 border-t border-slate-200 bg-white px-6 py-4">
-      <div className="mx-auto flex max-w-3xl items-end gap-3 rounded-3xl bg-white p-4 shadow-[0_10px_30px_rgba(15,23,42,0.08)]">
-        <button
-          type="button"
-          className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-xl text-slate-500 transition hover:bg-slate-200 disabled:cursor-not-allowed"
-          aria-label="Add attachment"
-          disabled={disabled}
-        >
-          📎
-        </button>
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        trySendMessage();
+      }}
+      className="shrink-0 border-t border-slate-200 bg-white px-3 pb-4 pt-3 md:px-4"
+    >
+      {readOnly && readOnlyMessage ? (
+        <div className="mx-auto mb-3 max-w-3xl rounded-full bg-amber-50 px-4 py-2 text-xs font-medium text-amber-700">
+          {readOnlyMessage}
+        </div>
+      ) : null}
 
-        <textarea
-          ref={textareaRef}
-          value={message}
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
-          placeholder="Type a message"
-          rows={1}
-          disabled={disabled}
-          className="flex-1 resize-none overflow-hidden bg-transparent text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none disabled:cursor-not-allowed disabled:text-slate-400"
-        />
-
-        <label className="flex items-center gap-2 rounded-full bg-slate-100 px-4 py-2 text-xs font-medium text-slate-600">
-          <input
-            type="checkbox"
-            checked={anonymous}
-            onChange={(event) => onToggleAnonymous(event.target.checked)}
-            disabled={!isAnonymousAllowed || disabled}
-            className="h-4 w-4 rounded border-slate-300 text-emerald-500 focus:ring-emerald-500 disabled:cursor-not-allowed"
-          />
-          Anonymous
-        </label>
-
-        <div className="flex items-center rounded-full bg-slate-100 p-1 text-xs font-medium text-slate-600">
+      <div className="mx-auto flex max-w-3xl flex-col gap-3 rounded-3xl bg-white p-4 shadow-[0_10px_30px_rgba(15,23,42,0.08)] md:flex-row md:flex-wrap md:items-end lg:flex-nowrap">
+        <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
-            onClick={() => onChangeVisibility("EVERYONE")}
-            disabled={disabled}
-            className={`rounded-full px-3 py-1 transition ${
-              visibility === "EVERYONE" ? "bg-emerald-500 text-white" : "hover:bg-slate-200"
+            onClick={toggleAnonymous}
+            disabled={!isAnonymousAllowed || disabled || readOnly}
+            className={`flex h-10 w-10 items-center justify-center rounded-full text-lg transition hover:bg-slate-200 ${
+              anonymous ? "bg-emerald-500 text-white" : "bg-slate-100 text-slate-600"
             } disabled:cursor-not-allowed disabled:opacity-60`}
+            aria-label={anonymous ? "Disable anonymous" : "Enable anonymous"}
+            aria-pressed={anonymous}
+            title={anonymous ? "Anonymous on" : "Anonymous off"}
           >
-            Everyone
+            🕶️
           </button>
+
           <button
             type="button"
-            onClick={() => onChangeVisibility("ADMIN_ONLY")}
-            disabled={disabled}
-            className={`rounded-full px-3 py-1 transition ${
-              visibility === "ADMIN_ONLY" ? "bg-blue-500 text-white" : "hover:bg-slate-200"
+            onClick={toggleVisibility}
+            disabled={disabled || readOnly || !canUseAdminOnly}
+            className={`flex h-10 w-10 items-center justify-center rounded-full text-lg transition hover:bg-slate-200 ${
+              visibility === "ADMIN_ONLY" ? "bg-blue-500 text-white" : "bg-slate-100 text-slate-600"
             } disabled:cursor-not-allowed disabled:opacity-60`}
+            aria-label={visibility === "ADMIN_ONLY" ? "Send to everyone" : "Send to admins only"}
+            aria-pressed={visibility === "ADMIN_ONLY"}
+            title={visibility === "ADMIN_ONLY" ? "Admin only" : "Everyone"}
           >
-            Admin only
+            🛡️
           </button>
         </div>
 
+        <textarea
+          ref={textareaRef}
+          value={value}
+          onChange={handleInput}
+          onKeyDown={handleKeyDown}
+          placeholder={readOnly ? "You can no longer send messages in this board." : "Type a message"}
+          rows={1}
+          disabled={disabled || readOnly}
+          className="wrap-anywhere min-h-[40px] max-h-[140px] w-full flex-1 resize-none overflow-hidden rounded-xl border border-slate-200 bg-white p-2 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-200 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 md:min-w-[200px]"
+        />
+
         <button
           type="submit"
-          disabled={disabled || !message.trim()}
-          className="flex h-11 items-center gap-2 rounded-full bg-emerald-500 px-5 text-sm font-semibold text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-emerald-300"
+          disabled={disabled || readOnly || !value.trim()}
+          className="flex h-11 items-center justify-center rounded-full bg-emerald-500 px-4 text-sm font-semibold text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-emerald-300 lg:self-end"
+          aria-label="Send message"
         >
-          <span>Send</span>
-          <span aria-hidden>➤</span>
+          ➤
         </button>
       </div>
 
       {!isAnonymousAllowed ? (
-        <p className="mt-2 text-xs text-slate-400">Admin has turned off anonymous messages.</p>
+        <p className="mx-auto mt-2 max-w-3xl text-xs text-slate-400">Admin has turned off anonymous messages.</p>
       ) : null}
     </form>
   );

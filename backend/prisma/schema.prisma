@@ -18,6 +18,7 @@ model User {
   comments         Comment[]
   boardMemberships BoardMembership[]
   createdBoards    Board[]           @relation("UserCreatedBoards")
+  lastCommentBoards Board[]          @relation("BoardLastCommentSender")
 }
 
 model Board {
@@ -27,10 +28,19 @@ model Board {
   createdAt     DateTime          @default(now())
   lastActivity  DateTime          @default(now())
   anonymousEnabled Boolean       @default(false)
+  lastCommentAt        DateTime?
+  lastCommentPreview   String?
+  lastCommentVisibility Visibility?
+  lastCommentAnonymous  Boolean   @default(false)
+  lastCommentSenderId   String?
+  lastCommentSender     User?     @relation("BoardLastCommentSender", fields: [lastCommentSenderId], references: [id])
   createdBy     String
   createdByUser User              @relation("UserCreatedBoards", fields: [createdBy], references: [id])
   comments      Comment[]
   members       BoardMembership[]
+
+  @@index([lastActivity], map: "idx_board_last_activity")
+  @@index([lastCommentAt], map: "idx_board_last_comment_at")
 }
 
 model BoardMembership {
@@ -39,11 +49,14 @@ model BoardMembership {
   boardId String
   role    Role   @default(MEMBER)
   pinned  Boolean @default(false)
+  status  MembershipStatus @default(ACTIVE)
+  leftAt  DateTime?
 
   user  User  @relation(fields: [userId], references: [id])
   board Board @relation(fields: [boardId], references: [id])
 
   @@unique([userId, boardId])
+  @@index([userId, status], map: "idx_boardmembership_user_status")
 }
 
 model Comment {
@@ -57,11 +70,18 @@ model Comment {
 
   createdBy User  @relation(fields: [createdById], references: [id])
   board     Board @relation(fields: [boardId], references: [id])
+
+  @@index([boardId, createdAt], map: "idx_comment_board_created")
 }
 
 enum Role {
   ADMIN
   MEMBER
+}
+
+enum MembershipStatus {
+  ACTIVE
+  LEFT
 }
 
 enum Visibility {

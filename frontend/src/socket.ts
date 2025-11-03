@@ -13,8 +13,20 @@ const socket = io(BACKEND, {
 });
 
 if (import.meta.env.DEV) {
+  socket.on("connect", () => {
+    console.log("[rt] socket connected", socket.id);
+  });
+  socket.on("disconnect", (reason) => {
+    console.log("[rt] socket disconnected", reason);
+  });
+  socket.on("reconnect_attempt", (attempt) => {
+    console.log("[rt] reconnect attempt", attempt);
+  });
+  socket.on("reconnect", (attempt) => {
+    console.log("[rt] reconnected", attempt);
+  });
   socket.on("connect_error", (error) => {
-    console.warn("Socket connect_error:", error?.message ?? error);
+    console.warn("[rt] connect_error:", error?.message ?? error);
   });
 }
 
