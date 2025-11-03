@@ -5,6 +5,7 @@ import { GoogleOAuthProvider } from "@react-oauth/google";
 import App from "./App";
 import BoardRoomPage from "./BoardRoomPage"; // ✅ Make sure this path is correct
 import Landing from "./pages/Landing";
+import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
