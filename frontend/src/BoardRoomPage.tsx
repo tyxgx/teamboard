@@ -558,7 +558,7 @@ export default function BoardRoomPage() {
           lastActivity: details.lastActivity ?? null,
           membershipStatus: details.membershipStatus,
           readOnly: details.readOnly,
-          memberCount: details.members.length,
+          memberCount: details.members?.length || 0,
           role: details.membershipRole,
           isCreator: details.isCreator,
         });
@@ -1099,7 +1099,7 @@ export default function BoardRoomPage() {
       }
 
       if (action === "left") {
-        if (userId === user.id) {
+        if (userId === user?.id) {
           updateBoardSummary(code, { membershipStatus: "LEFT", readOnly: true });
           if (activeRoomRef.current === code) {
             activeRoomRef.current = null;
@@ -1118,45 +1118,53 @@ export default function BoardRoomPage() {
       }
     };
 
-    const handleUserJoined = useCallback((payload: { name: string }) => {
-      if (!boardDetails?.code) return;
-      const systemMessage: ChatMessage = {
-        id: `system-join-${Date.now()}`,
-        sender: "System",
-        message: `${payload.name} joined the board`,
-        system: true,
-        createdAt: new Date().toISOString(),
-        visibility: "EVERYONE",
-        boardCode: boardDetails.code,
-      };
-      setMessages((prev) => [...prev, systemMessage]);
-      // Update member count in sidebar
-      if (boardDetails) {
-        updateBoardSummary(boardDetails.code, {
-          memberCount: boardDetails.members.length + 1,
-        });
+    const handleUserJoined = (payload: { name: string }) => {
+      if (!boardDetails?.code || !payload?.name) return;
+      try {
+        const systemMessage: ChatMessage = {
+          id: `system-join-${Date.now()}`,
+          sender: "System",
+          message: `${payload.name} joined the board`,
+          system: true,
+          createdAt: new Date().toISOString(),
+          visibility: "EVERYONE",
+          boardCode: boardDetails.code,
+        };
+        setMessages((prev) => [...prev, systemMessage]);
+        // Update member count in sidebar
+        if (boardDetails && updateBoardSummary) {
+          updateBoardSummary(boardDetails.code, {
+            memberCount: (boardDetails.members?.length || 0) + 1,
+          });
+        }
+      } catch (error) {
+        console.error("Error handling user joined:", error);
       }
-    }, [boardDetails, updateBoardSummary]);
+    };
 
-    const handleUserLeft = useCallback((payload: { name: string }) => {
-      if (!boardDetails?.code) return;
-      const systemMessage: ChatMessage = {
-        id: `system-left-${Date.now()}`,
-        sender: "System",
-        message: `${payload.name} left the board`,
-        system: true,
-        createdAt: new Date().toISOString(),
-        visibility: "EVERYONE",
-        boardCode: boardDetails.code,
-      };
-      setMessages((prev) => [...prev, systemMessage]);
-      // Update member count in sidebar
-      if (boardDetails) {
-        updateBoardSummary(boardDetails.code, {
-          memberCount: Math.max(0, boardDetails.members.length - 1),
-        });
+    const handleUserLeft = (payload: { name: string }) => {
+      if (!boardDetails?.code || !payload?.name) return;
+      try {
+        const systemMessage: ChatMessage = {
+          id: `system-left-${Date.now()}`,
+          sender: "System",
+          message: `${payload.name} left the board`,
+          system: true,
+          createdAt: new Date().toISOString(),
+          visibility: "EVERYONE",
+          boardCode: boardDetails.code,
+        };
+        setMessages((prev) => [...prev, systemMessage]);
+        // Update member count in sidebar
+        if (boardDetails && updateBoardSummary) {
+          updateBoardSummary(boardDetails.code, {
+            memberCount: Math.max(0, (boardDetails.members?.length || 0) - 1),
+          });
+        }
+      } catch (error) {
+        console.error("Error handling user left:", error);
       }
-    }, [boardDetails, updateBoardSummary]);
+    };
 
     socketClient.on("receive-message", handleReceiveMessage);
     socketClient.on("board-activity", handleBoardActivity);

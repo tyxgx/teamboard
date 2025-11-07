@@ -41,7 +41,7 @@ export const RightPanel = ({
       ? "flex h-full w-full flex-col overflow-y-auto bg-white p-6"
       : "hidden h-full w-[320px] flex-col overflow-y-auto border-l border-slate-200 bg-white p-6 lg:flex";
 
-  const memberCount = board.members.length;
+  const memberCount = board.members?.length || 0;
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -107,7 +107,7 @@ export const RightPanel = ({
       <section className="mt-6 rounded-2xl bg-slate-50 px-5 py-4 shadow-sm">
         <h3 className="text-sm font-semibold text-slate-900">Members ({memberCount})</h3>
         <ul className="mt-4 space-y-2">
-          {board.members.length === 0 ? (
+          {(!board.members || board.members.length === 0) ? (
             <li className="rounded-xl bg-white px-3 py-2 text-xs text-slate-500">No members yet.</li>
           ) : (
             board.members.map((member) => (
