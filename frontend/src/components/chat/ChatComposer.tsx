@@ -27,6 +27,7 @@ export const ChatComposer = ({
   onChangeVisibility,
   isAnonymousAllowed,
   canUseAdminOnly = true,
+  isAdmin = false,
   disabled = false,
   readOnly = false,
   readOnlyMessage,
@@ -60,6 +61,8 @@ export const ChatComposer = ({
 
   const toggleAnonymous = () => {
     if (!isAnonymousAllowed || disabled || readOnly) return;
+    // Only allow disabling if user is admin
+    if (!anonymous && !isAdmin) return; // Prevent non-admins from disabling anonymous mode
     onToggleAnonymous(!anonymous);
   };
 
@@ -74,7 +77,7 @@ export const ChatComposer = ({
         event.preventDefault();
         trySendMessage();
       }}
-      className="shrink-0 border-t border-slate-200 bg-white px-3 pb-4 pt-3 md:px-4"
+      className="shrink-0 border-t border-slate-200 bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100 px-3 pb-4 pt-3 md:px-4"
     >
       {readOnly && readOnlyMessage ? (
         <div className="mx-auto mb-3 max-w-3xl rounded-full bg-amber-50 px-4 py-2 text-xs font-medium text-amber-700">
@@ -93,24 +96,26 @@ export const ChatComposer = ({
             } disabled:cursor-not-allowed disabled:opacity-60`}
             aria-label={anonymous ? "Disable anonymous" : "Enable anonymous"}
             aria-pressed={anonymous}
-            title={anonymous ? "Anonymous on" : "Anonymous off"}
+            title={anonymous ? (isAdmin ? "Anonymous on (click to disable)" : "Anonymous on (only admins can disable)") : "Anonymous off"}
           >
             🕶️
           </button>
 
-          <button
-            type="button"
-            onClick={toggleVisibility}
-            disabled={disabled || readOnly || !canUseAdminOnly}
-            className={`flex h-10 w-10 items-center justify-center rounded-full text-lg transition hover:bg-slate-200 ${
-              visibility === "ADMIN_ONLY" ? "bg-blue-500 text-white" : "bg-slate-100 text-slate-600"
-            } disabled:cursor-not-allowed disabled:opacity-60`}
-            aria-label={visibility === "ADMIN_ONLY" ? "Send to everyone" : "Send to admins only"}
-            aria-pressed={visibility === "ADMIN_ONLY"}
-            title={visibility === "ADMIN_ONLY" ? "Admin only" : "Everyone"}
-          >
-            🛡️
-          </button>
+          {canUseAdminOnly && isAdmin ? (
+            <button
+              type="button"
+              onClick={toggleVisibility}
+              disabled={disabled || readOnly}
+              className={`flex h-10 w-10 items-center justify-center rounded-full text-lg transition hover:bg-slate-200 ${
+                visibility === "ADMIN_ONLY" ? "bg-blue-500 text-white" : "bg-slate-100 text-slate-600"
+              } disabled:cursor-not-allowed disabled:opacity-60`}
+              aria-label={visibility === "ADMIN_ONLY" ? "Send to everyone" : "Send to admins only"}
+              aria-pressed={visibility === "ADMIN_ONLY"}
+              title={visibility === "ADMIN_ONLY" ? "Admin only" : "Everyone"}
+            >
+              🛡️
+            </button>
+          ) : null}
         </div>
 
         <textarea
