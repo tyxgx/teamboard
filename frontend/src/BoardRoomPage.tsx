@@ -168,7 +168,7 @@ export default function BoardRoomPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [composerValue, setComposerValue] = useState("");
   const [visibility, setVisibility] = useState<"EVERYONE" | "ADMIN_ONLY">("EVERYONE");
-  const [anonymousMode, setAnonymousMode] = useState(true); // Anonymous mode ON by default
+  const [anonymousMode, setAnonymousMode] = useState(false); // Anonymous mode OFF by default - user's choice per message
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isRightPanelOpen, setRightPanelOpen] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -771,7 +771,7 @@ export default function BoardRoomPage() {
       setLoadingHistory(false);
       setCommentsError(null);
       setComposerValue("");
-      setAnonymousMode(true); // Reset to default (ON) when switching boards
+      setAnonymousMode(false); // Reset to default (OFF) when switching boards
       setVisibility("EVERYONE");
       setNextCursor(null); // TASK 2.4: Clear cursor when switching boards (reserved for future use)
       pendingMessagesRef.current.clear();
@@ -792,7 +792,7 @@ export default function BoardRoomPage() {
     setCommentsError(null);
     setMessages([]);
     setComposerValue("");
-    setAnonymousMode(true); // Reset to default (ON)
+    setAnonymousMode(false); // Reset to default (OFF)
     setVisibility("EVERYONE");
     pendingMessagesRef.current.clear();
     // Don't clear activeRoomRef or realtimeService here since we just joined above
@@ -1065,7 +1065,7 @@ export default function BoardRoomPage() {
       if (boardDetails?.code === code) {
         setBoardDetails((prev) => (prev ? { ...prev, anonymousEnabled: payload.anonymousEnabled } : prev));
         if (!payload.anonymousEnabled) {
-          setAnonymousMode(true); // Reset to default (ON) if anonymous is disabled on board
+          setAnonymousMode(false); // Reset to default (OFF) if anonymous is disabled on board
         }
       }
     };
@@ -1268,7 +1268,7 @@ export default function BoardRoomPage() {
         );
         setBoardDetails((prev) => (prev ? { ...prev, anonymousEnabled: enabled } : prev));
         updateBoardSummary(boardDetails.code, { anonymousEnabled: enabled });
-        if (!enabled) setAnonymousMode(true); // If anonymous is disabled on board, reset to default (ON) for next message
+        if (!enabled) setAnonymousMode(false); // If anonymous is disabled on board, reset to default (OFF) for next message
       } catch (error: any) {
         if (error?.response?.status === 401) {
           handleAuthFailure();
@@ -1545,7 +1545,7 @@ export default function BoardRoomPage() {
       setCommentsError(null);
       setComposerValue("");
       setVisibility("EVERYONE");
-      setAnonymousMode(true); // Reset to default (ON) when switching boards
+      setAnonymousMode(false); // Reset to default (OFF) when switching boards
       setHasMoreMessages(true); // Reset when switching boards
       setSwitchingBoard(code); // Set loading state immediately
       pendingMessagesRef.current.clear();
@@ -1613,7 +1613,7 @@ export default function BoardRoomPage() {
     setBoardDetails(null);
     setMessages([]);
     setComposerValue("");
-    setAnonymousMode(true); // Reset to default (ON)
+    setAnonymousMode(false); // Reset to default (OFF)
     setVisibility("EVERYONE");
     setCreateDialogOpen(false);
     setJoinDialogOpen(false);
