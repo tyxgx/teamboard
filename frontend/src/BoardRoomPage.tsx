@@ -188,12 +188,7 @@ export default function BoardRoomPage() {
   const [joinBoardError, setJoinBoardError] = useState<string | null>(null);
   const [initialLoadProgress, setInitialLoadProgress] = useState(0);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return document.documentElement.classList.contains('dark');
-    }
-    return false;
-  });
+  const [isDarkMode, setIsDarkMode] = useState(false);
   const [createBoardName, setCreateBoardName] = useState("");
   const [joinCodeValue, setJoinCodeValue] = useState("");
 
@@ -622,15 +617,13 @@ export default function BoardRoomPage() {
 
   // Sync dark mode state with DOM on mount
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('darkMode');
-      const shouldBeDark = saved === 'true';
-      setIsDarkMode(shouldBeDark);
-      if (shouldBeDark) {
-        document.documentElement.classList.add('dark');
-      } else {
-        document.documentElement.classList.remove('dark');
-      }
+    const saved = localStorage.getItem('darkMode');
+    const shouldBeDark = saved === 'true';
+    setIsDarkMode(shouldBeDark);
+    if (shouldBeDark) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
     }
   }, []);
 

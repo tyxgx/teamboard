@@ -1,4 +1,4 @@
-import { useEffect, Suspense, lazy, useState } from "react";
+import { useEffect, Suspense, lazy } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 // TASK 3.1: Lazy load BoardRoomPage for code splitting
 const BoardRoomPage = lazy(() => import("./BoardRoomPage"));
@@ -18,19 +18,6 @@ const LoadingSkeleton = () => (
 function App() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [darkMode] = useState(() => {
-    const saved = localStorage.getItem('darkMode');
-    return saved === 'true';
-  });
-
-  useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-    localStorage.setItem('darkMode', darkMode.toString());
-  }, [darkMode]);
 
   useEffect(() => {
     // Immediate synchronous check (non-blocking for render)
