@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import React, { type ReactNode } from "react";
 
 type MessageBubbleProps = {
   isOwn: boolean;
@@ -17,7 +17,7 @@ const formatTime = (timestamp?: string) => {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 };
 
-export const MessageBubble = ({
+export const MessageBubble = React.memo(({
   isOwn,
   isAnonymous,
   audience,
@@ -68,4 +68,4 @@ export const MessageBubble = ({
       <div className="w-9" aria-hidden />
     </div>
   );
-};
+});

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
 import socketClient from "./socket";
@@ -171,6 +171,7 @@ export default function BoardRoomPage() {
   const [isRightPanelOpen, setRightPanelOpen] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [commentsError, setCommentsError] = useState<string | null>(null);
+  const [switchingBoard, setSwitchingBoard] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [joinDialogOpen, setJoinDialogOpen] = useState(false);
@@ -184,6 +185,10 @@ export default function BoardRoomPage() {
   const activeRoomRef = useRef<string | null>(null);
   const lastReceivedRef = useRef<Record<string, string>>({});
   const lastDeltaRunRef = useRef<Record<string, number>>({});
+  
+  // Cache for prefetched board data
+  const boardCacheRef = useRef<Map<string, { details: BoardDetails; comments: ChatMessage[]; timestamp: number }>>(new Map());
+  const CACHE_TTL = 30000; // 30 seconds
 
   const handleAuthFailure = useCallback(() => {
     localStorage.removeItem("token");
@@ -214,23 +219,27 @@ export default function BoardRoomPage() {
   }, [location.pathname, location.search, navigate]);
 
   const updateBoardSummary = useCallback((code: string, updates: Partial<BoardSummary>) => {
-    setBoards((prev) => {
-      const next = prev.map((board) => (board.code === code ? { ...board, ...updates } : board));
-      return sortBoardSummaries(next);
+    startTransition(() => {
+      setBoards((prev) => {
+        const next = prev.map((board) => (board.code === code ? { ...board, ...updates } : board));
+        return sortBoardSummaries(next);
+      });
     });
   }, []);
 
   const applyUnread = useCallback(
     (code: string, updater: (prev: number) => number) => {
-      setUnreadByBoard((prev) => {
-        const nextValue = updater(prev[code] ?? 0);
-        const next = { ...prev };
-        if (nextValue <= 0) {
-          delete next[code];
-        } else {
-          next[code] = nextValue;
-        }
-        return next;
+      startTransition(() => {
+        setUnreadByBoard((prev) => {
+          const nextValue = updater(prev[code] ?? 0);
+          const next = { ...prev };
+          if (nextValue <= 0) {
+            delete next[code];
+          } else {
+            next[code] = nextValue;
+          }
+          return next;
+        });
       });
     },
     [setUnreadByBoard]
@@ -336,22 +345,65 @@ export default function BoardRoomPage() {
   const debouncedLoadBoards = useMemo(() => debounce(loadBoards, 300), [loadBoards]);
 
   const loadBoardDetails = useCallback(
-    async (code: string) => {
+    async (code: string, useCache = true) => {
       const headers = getAuthHeaders();
       if (!headers) return null;
+      
+      // Check cache first for instant display
+      if (useCache) {
+        const cached = boardCacheRef.current.get(code);
+        if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+          setBoardDetails(cached.details);
+          mergeIncomingMessages(cached.details.code, cached.comments);
+          // Still fetch fresh data in background (use a separate function to avoid recursion)
+          const fetchFresh = async () => {
+            try {
+              const boardResponse = await axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers });
+              const details = boardResponse.data as BoardDetails;
+              const commentsData = await axios.get(`${BACKEND}/api/comments/${details.id}?limit=100`, { headers });
+              const commentsResponseData = commentsData.data;
+              const comments: ChatMessage[] = Array.isArray(commentsResponseData) ? commentsResponseData : (commentsResponseData.comments || []);
+              const shapedMessages = comments.map((message) => ({
+                ...message,
+                boardCode: details.code,
+              }));
+              boardCacheRef.current.set(code, {
+                details,
+                comments: shapedMessages,
+                timestamp: Date.now(),
+              });
+              setBoardDetails(details);
+              mergeIncomingMessages(details.code, shapedMessages);
+            } catch (error) {
+              // Silently fail background refresh
+            }
+          };
+          void fetchFresh();
+          return cached.details;
+        }
+      }
+      
       try {
-        const response = await axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers });
-        const details = response.data as BoardDetails;
+        // Fetch board details first (we need ID for comments)
+        const boardResponse = await axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers });
+        const details = boardResponse.data as BoardDetails;
         
-        // Fetch comments separately with pagination
-        const commentsResponse = await axios.get(`${BACKEND}/api/comments/${details.id}?limit=100`, { headers });
-        const commentsData = commentsResponse.data;
+        // Fetch comments immediately after getting board details (can't be truly parallel due to dependency)
+        const commentsData = await axios.get(`${BACKEND}/api/comments/${details.id}?limit=100`, { headers });
+        const commentsResponseData = commentsData.data;
         // Handle both old (array) and new (object with comments key) response formats
-        const comments: ChatMessage[] = Array.isArray(commentsData) ? commentsData : (commentsData.comments || []);
+        const comments: ChatMessage[] = Array.isArray(commentsResponseData) ? commentsResponseData : (commentsResponseData.comments || []);
         const shapedMessages = comments.map((message) => ({
           ...message,
           boardCode: details.code,
         }));
+        
+        // Update cache
+        boardCacheRef.current.set(code, {
+          details,
+          comments: shapedMessages,
+          timestamp: Date.now(),
+        });
         
         setBoardDetails(details);
         mergeIncomingMessages(details.code, shapedMessages);
@@ -474,6 +526,8 @@ export default function BoardRoomPage() {
       try {
         const details = await loadBoardDetails(boardCode);
         if (!details || cancelled) return;
+        // Clear switching state once data is loaded
+        setSwitchingBoard(null);
       } catch (error: any) {
         if (error?.response?.status === 401) {
           handleAuthFailure();
@@ -990,6 +1044,40 @@ export default function BoardRoomPage() {
     });
   }, [boards, setUnreadByBoard]);
 
+  // Prefetch function for board data
+  const prefetchBoard = useCallback(
+    async (code: string) => {
+      const headers = getAuthHeaders();
+      if (!headers) return;
+      
+      // Don't prefetch if already cached or currently active
+      const cached = boardCacheRef.current.get(code);
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL) return;
+      if (boardDetails?.code === code) return;
+      
+      try {
+        const boardResponse = await axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers });
+        const details = boardResponse.data as BoardDetails;
+        const commentsData = await axios.get(`${BACKEND}/api/comments/${details.id}?limit=100`, { headers });
+        const commentsResponseData = commentsData.data;
+        const comments: ChatMessage[] = Array.isArray(commentsResponseData) ? commentsResponseData : (commentsResponseData.comments || []);
+        const shapedMessages = comments.map((message) => ({
+          ...message,
+          boardCode: details.code,
+        }));
+        
+        boardCacheRef.current.set(code, {
+          details,
+          comments: shapedMessages,
+          timestamp: Date.now(),
+        });
+      } catch (error) {
+        // Silently fail prefetch
+      }
+    },
+    [getAuthHeaders, boardDetails?.code]
+  );
+
   const handleSelectBoard = useCallback(
     (code: string) => {
       if (!code) return;
@@ -998,8 +1086,11 @@ export default function BoardRoomPage() {
         setRightPanelOpen(false);
         return;
       }
+      
+      // Show skeleton immediately for instant feedback
+      setSwitchingBoard(code);
       setCommentsError(null);
-      setMessages([]);
+      // Don't clear messages immediately - let skeleton show
       setComposerValue("");
       setVisibility("EVERYONE");
       setAnonymousMode(false);
@@ -1023,16 +1114,28 @@ export default function BoardRoomPage() {
       if (!target) return;
       const headers = getAuthHeaders();
       if (!headers) return;
+      
+      // Optimistic update - show change immediately
+      const newPinnedState = !target.pinned;
+      setBoards((prev) => sortBoardSummaries(prev.map((board) => 
+        board.id === target.id ? { ...board, pinned: newPinnedState } : board
+      )));
+      
       try {
         const response = await axios.patch(
           `${BACKEND}/api/boards/${target.id}/pin`,
-          { pinned: !target.pinned },
+          { pinned: newPinnedState },
           { headers }
         );
         const updated: BoardSummary = response.data;
+        // Update with server response (in case server has different data)
         setBoards((prev) => sortBoardSummaries(prev.map((board) => (board.id === updated.id ? updated : board))));
       } catch (error) {
+        // Revert on error
         console.error("Failed to update pinned status", error);
+        setBoards((prev) => sortBoardSummaries(prev.map((board) => 
+          board.id === target.id ? { ...board, pinned: target.pinned } : board
+        )));
       }
     },
     [boards, getAuthHeaders]
@@ -1090,6 +1193,7 @@ export default function BoardRoomPage() {
     onLogout: handleLogout,
     unreadByBoard,
     showFooterActions: Boolean(boardDetails?.code),
+    onPrefetchBoard: prefetchBoard,
   } as const;
 
   return (
@@ -1115,7 +1219,7 @@ export default function BoardRoomPage() {
               isAdmin={isAdmin}
               currentUserId={user?.id}
               currentUserName={user?.name}
-              isLoading={loadingHistory}
+              isLoading={loadingHistory || switchingBoard === boardDetails.code}
               onLoadOlder={boardDetails.id ? handleLoadOlder : undefined}
             />
 

@@ -127,7 +127,22 @@ export const MessageList = ({
         <div ref={topSentinelRef} />
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
           {isLoading && messages.length === 0 ? (
-            <div className="py-16 text-center text-sm text-slate-400">Loading conversation…</div>
+            <>
+              {[...Array(5)].map((_, i) => (
+                <div key={i} className="flex w-full gap-3 justify-start animate-pulse">
+                  <div className="w-9" aria-hidden />
+                  <div className="max-w-[65%] rounded-2xl border border-slate-200 bg-slate-100 px-4 py-3 shadow-sm">
+                    <div className="mb-2 h-4 w-24 bg-slate-300 rounded" />
+                    <div className="space-y-2">
+                      <div className="h-4 bg-slate-300 rounded w-full" />
+                      <div className="h-4 bg-slate-300 rounded w-3/4" />
+                    </div>
+                    <div className="mt-2 h-3 w-16 bg-slate-300 rounded ml-auto" />
+                  </div>
+                  <div className="w-9" aria-hidden />
+                </div>
+              ))}
+            </>
           ) : grouped.length === 0 ? (
             <div className="py-20 text-center text-sm text-slate-400">No messages yet. Start the conversation!</div>
           ) : (

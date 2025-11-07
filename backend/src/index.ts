@@ -38,7 +38,7 @@ app.get('/', (req: Request, res: Response) => {
 
 // ✅ Light caching for board list endpoint
 app.get('/api/boards', (req: Request, res: Response, next: NextFunction) => {
-  res.set('Cache-Control', 'private, max-age=5');
+  res.set('Cache-Control', 'private, max-age=15');
   next();
 });
 

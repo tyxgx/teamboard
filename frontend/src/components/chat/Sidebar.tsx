@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 
 type MembershipStatus = "ACTIVE" | "LEFT";
@@ -33,6 +33,7 @@ type SidebarProps = {
   showFooterActions: boolean;
   variant?: "desktop" | "mobile";
   onClose?: () => void;
+  onPrefetchBoard?: (code: string) => void;
 };
 
 const formatRelative = (iso?: string | null) => {
@@ -76,11 +77,13 @@ export const Sidebar = React.memo(({
   showFooterActions,
   variant = "desktop",
   onClose,
+  onPrefetchBoard,
 }: SidebarProps) => {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [accountMenu, setAccountMenu] = useState(false);
+  const prefetchTimeoutRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   const filteredBoards = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
@@ -183,7 +186,27 @@ export const Sidebar = React.memo(({
                     onClick={() => {
                       closeMenus();
                       closeIfMobile();
+                      // Clear any pending prefetch
+                      if (prefetchTimeoutRef.current[board.code]) {
+                        clearTimeout(prefetchTimeoutRef.current[board.code]);
+                        delete prefetchTimeoutRef.current[board.code];
+                      }
                       onSelectBoard(board.code);
+                    }}
+                    onMouseEnter={() => {
+                      // Prefetch on hover with delay to avoid accidental prefetches
+                      if (!isActive && onPrefetchBoard && !prefetchTimeoutRef.current[board.code]) {
+                        prefetchTimeoutRef.current[board.code] = setTimeout(() => {
+                          onPrefetchBoard(board.code);
+                        }, 200);
+                      }
+                    }}
+                    onMouseLeave={() => {
+                      // Cancel prefetch if user moves away
+                      if (prefetchTimeoutRef.current[board.code]) {
+                        clearTimeout(prefetchTimeoutRef.current[board.code]);
+                        delete prefetchTimeoutRef.current[board.code];
+                      }
                     }}
                     className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition ${
                       isActive ? "bg-slate-700/60 shadow-inner" : "hover:bg-slate-700/40"
