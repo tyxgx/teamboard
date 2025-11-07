@@ -22,6 +22,7 @@ type MessageListProps = {
   currentUserName?: string;
   typingIndicator?: string[];
   isLoading?: boolean;
+  isLoadingOlder?: boolean;
   onLoadOlder?: () => void;
 };
 
@@ -50,11 +51,13 @@ export const MessageList = ({
   currentUserName,
   typingIndicator = [],
   isLoading = false,
+  isLoadingOlder = false,
   onLoadOlder,
 }: MessageListProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const [nearBottom, setNearBottom] = useState(true);
+  const [isLoadingOlderState, setIsLoadingOlderState] = useState(false);
 
   const scrollToBottom = (behavior: ScrollBehavior = "smooth") => {
     const el = containerRef.current;
@@ -81,6 +84,36 @@ export const MessageList = ({
     }
   }, [messages, typingIndicator, nearBottom]);
 
+  // Prefetch when user scrolls near top (80% scrolled = 20% from top)
+  useEffect(() => {
+    if (!onLoadOlder) return;
+    const container = containerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      const scrollTop = container.scrollTop;
+      const scrollHeight = container.scrollHeight;
+      const clientHeight = container.clientHeight;
+      const maxScroll = scrollHeight - clientHeight;
+      
+      // Avoid division by zero
+      if (maxScroll <= 0) return;
+      
+      const scrollPercentage = scrollTop / maxScroll;
+      
+      // Trigger prefetch when 80% scrolled (20% from top)
+      if (scrollPercentage >= 0.8 && !isLoadingOlderState && !isLoadingOlder && scrollTop > 0) {
+        setIsLoadingOlderState(true);
+        onLoadOlder();
+        setTimeout(() => setIsLoadingOlderState(false), 500);
+      }
+    };
+
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [onLoadOlder, isLoadingOlderState, isLoadingOlder]);
+
+  // Also observe top sentinel as fallback (when actually at top)
   useEffect(() => {
     if (!onLoadOlder) return;
     const sentinel = topSentinelRef.current;
@@ -89,8 +122,10 @@ export const MessageList = ({
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting) {
+        if (entries[0]?.isIntersecting && !isLoadingOlderState && !isLoadingOlder) {
+          setIsLoadingOlderState(true);
           onLoadOlder();
+          setTimeout(() => setIsLoadingOlderState(false), 500);
         }
       },
       {
@@ -104,7 +139,7 @@ export const MessageList = ({
     return () => {
       observer.disconnect();
     };
-  }, [onLoadOlder]);
+  }, [onLoadOlder, isLoadingOlderState, isLoadingOlder]);
 
   const grouped = useMemo(() => {
     const buckets: Record<string, ChatMessage[]> = {};
@@ -126,6 +161,15 @@ export const MessageList = ({
       >
         <div ref={topSentinelRef} />
         <div className="mx-auto flex max-w-3xl flex-col gap-4">
+          {/* Loading indicator for older messages */}
+          {(isLoadingOlder || isLoadingOlderState) && messages.length > 0 ? (
+            <div className="flex justify-center py-2">
+              <div className="flex items-center gap-2 text-xs text-slate-400">
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-emerald-500" />
+                <span>Loading older messages...</span>
+              </div>
+            </div>
+          ) : null}
           {isLoading && messages.length === 0 ? (
             <>
               {[...Array(5)].map((_, i) => (

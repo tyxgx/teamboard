@@ -168,7 +168,20 @@ export const Sidebar = React.memo(({
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 pb-6">
-        {filteredBoards.length === 0 ? (
+        {boards.length === 0 ? (
+          // Show skeleton loaders while loading
+          <div className="space-y-1.5">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 animate-pulse">
+                <div className="h-9 w-9 shrink-0 rounded-full bg-slate-700/60" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-4 w-24 rounded bg-slate-700/60" />
+                  <div className="h-3 w-32 rounded bg-slate-700/40" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : filteredBoards.length === 0 ? (
           <p className="px-3 text-xs text-slate-500">No boards found.</p>
         ) : (
           <div className="space-y-1.5">

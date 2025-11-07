@@ -170,6 +170,7 @@ export default function BoardRoomPage() {
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isRightPanelOpen, setRightPanelOpen] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [commentsError, setCommentsError] = useState<string | null>(null);
   const [switchingBoard, setSwitchingBoard] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
@@ -190,6 +191,10 @@ export default function BoardRoomPage() {
   // Cache for prefetched board data
   const boardCacheRef = useRef<Map<string, { details: BoardDetails; comments: ChatMessage[]; timestamp: number }>>(new Map());
   const CACHE_TTL = 30000; // 30 seconds
+  
+  // Cache for board list
+  const boardListCacheRef = useRef<{ boards: BoardSummary[]; timestamp: number } | null>(null);
+  const BOARD_LIST_CACHE_TTL = 30000; // 30 seconds
 
   const handleAuthFailure = useCallback(() => {
     localStorage.removeItem("token");
@@ -207,7 +212,9 @@ export default function BoardRoomPage() {
     return { Authorization: `Bearer ${token}` } as const;
   }, []);
 
+  // Initialize socket IMMEDIATELY on mount (before any data fetch)
   useEffect(() => {
+    // Initialize socket connection immediately
     initRealtimeService();
     setSocketConnected(getSocketConnectionState());
     
@@ -350,13 +357,53 @@ export default function BoardRoomPage() {
     [getAuthHeaders, handleAuthFailure, mergeIncomingMessages, updateLastReceived]
   );
 
-  const loadBoards = useCallback(async () => {
+  const loadBoards = useCallback(async (useCache = true) => {
     const headers = getAuthHeaders();
     if (!headers) return;
-    const response = await axios.get(`${BACKEND}/api/boards`, { headers });
-    const summaries: BoardSummary[] = response.data;
-    setBoards(sortBoardSummaries(summaries));
-    setHiddenBoardIds((prev) => prev.filter((id) => summaries.some((board) => board.id === id)));
+    
+    // Check cache first for instant display
+    if (useCache && boardListCacheRef.current) {
+      const cached = boardListCacheRef.current;
+      if (Date.now() - cached.timestamp < BOARD_LIST_CACHE_TTL) {
+        setBoards(sortBoardSummaries(cached.boards));
+        setHiddenBoardIds((prev) => prev.filter((id) => cached.boards.some((board) => board.id === id)));
+        // Fetch fresh data in background (use separate function to avoid recursion)
+        const fetchFresh = async () => {
+          try {
+            const response = await axios.get(`${BACKEND}/api/boards`, { headers });
+            const summaries: BoardSummary[] = response.data;
+            const sorted = sortBoardSummaries(summaries);
+            boardListCacheRef.current = {
+              boards: sorted,
+              timestamp: Date.now(),
+            };
+            setBoards(sorted);
+            setHiddenBoardIds((prev) => prev.filter((id) => summaries.some((board) => board.id === id)));
+          } catch (error) {
+            // Silently fail background refresh
+          }
+        };
+        void fetchFresh();
+        return;
+      }
+    }
+    
+    try {
+      const response = await axios.get(`${BACKEND}/api/boards`, { headers });
+      const summaries: BoardSummary[] = response.data;
+      const sorted = sortBoardSummaries(summaries);
+      
+      // Update cache
+      boardListCacheRef.current = {
+        boards: sorted,
+        timestamp: Date.now(),
+      };
+      
+      setBoards(sorted);
+      setHiddenBoardIds((prev) => prev.filter((id) => summaries.some((board) => board.id === id)));
+    } catch (error) {
+      console.error("Failed to load boards", error);
+    }
   }, [getAuthHeaders, setHiddenBoardIds]);
 
   // Debounced version for non-initial calls
@@ -486,10 +533,27 @@ export default function BoardRoomPage() {
 
     const bootstrap = async () => {
       try {
-        const authResponse = await axios.get(`${BACKEND}/api/test-auth`, { headers });
+        // Parallelize user + boards fetching for faster load
+        const [authResponse, boardsResponse] = await Promise.all([
+          axios.get(`${BACKEND}/api/test-auth`, { headers }),
+          axios.get(`${BACKEND}/api/boards`, { headers }),
+        ]);
+        
         if (cancelled) return;
+        
+        // Update state in parallel
         setUser(authResponse.data.user as User);
-        await loadBoards();
+        const summaries: BoardSummary[] = boardsResponse.data;
+        const sorted = sortBoardSummaries(summaries);
+        
+        // Update cache
+        boardListCacheRef.current = {
+          boards: sorted,
+          timestamp: Date.now(),
+        };
+        
+        setBoards(sorted);
+        setHiddenBoardIds((prev) => prev.filter((id) => summaries.some((board) => board.id === id)));
       } catch (error: any) {
         if (!cancelled) {
           console.error("Failed to bootstrap user", error);
@@ -507,7 +571,7 @@ export default function BoardRoomPage() {
     return () => {
       cancelled = true;
     };
-  }, [getAuthHeaders, handleAuthFailure, loadBoards]);
+  }, [getAuthHeaders, handleAuthFailure, setHiddenBoardIds]);
 
   useEffect(() => {
     if (!boardCode) {
@@ -890,18 +954,24 @@ export default function BoardRoomPage() {
       userId: user.id,
     };
 
+    // Clear composer IMMEDIATELY (synchronously, before any async operations)
+    setComposerValue("");
+    
+    // Add optimistic message instantly
     pendingMessagesRef.current.add(clientMessageId);
     setMessages((prev) => [...prev, toSend]);
-    setComposerValue("");
     updateLastReceived(boardDetails.code, toSend.createdAt);
 
-    updateBoardSummary(boardDetails.code, {
-      lastActivity: toSend.createdAt ?? new Date().toISOString(),
-      lastCommentPreview: trimmed,
-      lastCommentAt: toSend.createdAt ?? new Date().toISOString(),
-      lastCommentVisibility: effectiveVisibility,
-      lastCommentAnonymous: anonymousMode,
-      lastCommentSenderName: anonymousMode ? user.name : user.name,
+    // Use startTransition for non-urgent board summary update
+    startTransition(() => {
+      updateBoardSummary(boardDetails.code, {
+        lastActivity: toSend.createdAt ?? new Date().toISOString(),
+        lastCommentPreview: trimmed,
+        lastCommentAt: toSend.createdAt ?? new Date().toISOString(),
+        lastCommentVisibility: effectiveVisibility,
+        lastCommentAnonymous: anonymousMode,
+        lastCommentSenderName: anonymousMode ? user.name : user.name,
+      });
     });
 
     const headers = getAuthHeaders();
@@ -966,11 +1036,16 @@ export default function BoardRoomPage() {
     }
   }, [boardDetails, handleAuthFailure, loadComments]);
 
-  const handleLoadOlder = useCallback(() => {
-    if (!boardDetails?.id) return;
+  const handleLoadOlder = useCallback(async () => {
+    if (!boardDetails?.id || loadingOlderMessages) return;
     setCommentsError(null);
-    void loadComments(boardDetails.id, boardDetails.code);
-  }, [boardDetails, loadComments]);
+    setLoadingOlderMessages(true);
+    try {
+      await loadComments(boardDetails.id, boardDetails.code);
+    } finally {
+      setLoadingOlderMessages(false);
+    }
+  }, [boardDetails, loadComments, loadingOlderMessages]);
 
   const handleCreateBoard = useCallback(async () => {
     const name = createBoardName.trim();
@@ -1277,6 +1352,7 @@ export default function BoardRoomPage() {
               currentUserId={user?.id}
               currentUserName={user?.name}
               isLoading={loadingHistory || switchingBoard === boardDetails.code}
+              isLoadingOlder={loadingOlderMessages}
               onLoadOlder={boardDetails.id ? handleLoadOlder : undefined}
             />
 
