@@ -11,11 +11,14 @@
   },
   "dependencies": {
     "@react-oauth/google": "^0.12.2",
+    "@types/react-window": "^2.0.0",
     "axios": "^1.10.0",
+    "dexie": "^4.2.1",
     "jwt-decode": "^4.0.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.6.2",
+    "react-window": "^2.2.3",
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
@@ -34,8 +37,10 @@
     "globals": "^16.2.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.10",
+    "terser": "^5.44.1",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.34.1",
     "vite": "^7.0.0"
-  }
+  },
+  "packageManager": "pnpm@10.20.0+sha512.cf9998222162dd85864d0a8102e7892e7ba4ceadebbf5a31f9c2fce48dfce317a9c53b9f6464d1ef9042cba2e02ae02a9f7c143a2b438cd93c91840f0192b9dd"
 }

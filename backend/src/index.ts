@@ -1,8 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import type { RequestHandler } from 'express';
-import { gzipSync } from 'node:zlib';
+import compression from 'compression';
 // no fs logging of envs in production
 import { swaggerUi, swaggerSpec } from './swagger';
 import testRoutes from './routes/test'; // ✅ ADD this line
@@ -21,48 +20,6 @@ import userRoutes from './routes/user.routes';
 
 const app = express();
 
-const gzipMiddleware: RequestHandler = (req, res, next) => {
-  if (req.method === 'HEAD') return next();
-  const acceptEncoding = req.headers['accept-encoding'] ?? '';
-  if (!acceptEncoding.includes('gzip')) {
-    return next();
-  }
-
-  const originalSend = res.send.bind(res);
-
-  res.send = ((body?: any) => {
-    if (body == null) {
-      return originalSend(body);
-    }
-
-    if (res.headersSent || res.getHeader('Content-Encoding')) {
-      return originalSend(body);
-    }
-
-    let buffer: Buffer;
-    if (Buffer.isBuffer(body)) {
-      buffer = body;
-    } else if (typeof body === 'string') {
-      buffer = Buffer.from(body);
-    } else if (typeof body === 'object') {
-      const json = JSON.stringify(body);
-      buffer = Buffer.from(json);
-      if (!res.getHeader('Content-Type')) {
-        res.setHeader('Content-Type', 'application/json; charset=utf-8');
-      }
-    } else {
-      buffer = Buffer.from(String(body));
-    }
-
-    const compressed = gzipSync(buffer);
-    res.setHeader('Content-Encoding', 'gzip');
-    res.setHeader('Content-Length', compressed.length.toString());
-    return originalSend(compressed);
-  }) as typeof res.send;
-
-  next();
-};
-
 // Restrict CORS via env; default to permissive for local dev
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || '*';
 app.use(
@@ -71,12 +28,36 @@ app.use(
     credentials: true,
   })
 );
-app.use(gzipMiddleware);
+app.use(compression());
 app.use(express.json());
 
 // ✅ Health check
 app.get('/', (req: Request, res: Response) => {
   res.send('TeamBoard API is running');
+});
+
+// TASK 3.3: Enhanced HTTP caching for various endpoints
+// Board list - short cache (15s) since it changes frequently
+app.get('/api/boards', (req: Request, res: Response, next: NextFunction) => {
+  res.set('Cache-Control', 'private, max-age=15, stale-while-revalidate=30');
+  next();
+});
+
+// Board details - medium cache (30s) with stale-while-revalidate
+app.get('/api/boards/by-code/:code', (req: Request, res: Response, next: NextFunction) => {
+  res.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
+  next();
+});
+
+// Comments - short cache (10s) since they update frequently
+app.get('/api/comments/:boardId', (req: Request, res: Response, next: NextFunction) => {
+  res.set('Cache-Control', 'private, max-age=10, stale-while-revalidate=20');
+  next();
+});
+
+app.get('/api/comments/by-code/:boardCode', (req: Request, res: Response, next: NextFunction) => {
+  res.set('Cache-Control', 'private, max-age=10, stale-while-revalidate=20');
+  next();
 });
 
 // ✅ Route registrations

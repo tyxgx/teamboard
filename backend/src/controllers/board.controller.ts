@@ -1,7 +1,24 @@
 import { Request, Response } from 'express';
 import { prisma } from '../db/client';
 import { nanoid } from 'nanoid';
+import { MembershipStatus, Visibility } from '@prisma/client';
 import { getIO } from '../sockets/socket';
+
+const boardSummarySelect = {
+  id: true,
+  name: true,
+  code: true,
+  lastActivity: true,
+  anonymousEnabled: true,
+  createdBy: true,
+  lastCommentAt: true,
+  lastCommentPreview: true,
+  lastCommentVisibility: true,
+  lastCommentAnonymous: true,
+  lastCommentSenderId: true,
+  lastCommentSenderName: true,
+  _count: { select: { members: true } },
+} as const;
 
 function buildBoardSummary(
   board: {
@@ -11,10 +28,17 @@ function buildBoardSummary(
     lastActivity: Date;
     anonymousEnabled: boolean;
     createdBy: string;
+    lastCommentAt: Date | null;
+    lastCommentPreview: string | null;
+    lastCommentVisibility: Visibility | null;
+    lastCommentAnonymous: boolean;
+    lastCommentSenderId: string | null;
+    lastCommentSenderName: string | null;
     _count: { members: number };
   },
-  membership: { role: string; pinned: boolean } | null,
-  userId: string
+  membership: { role: string; pinned: boolean; status: MembershipStatus } | null,
+  userId: string,
+  lastCommentSenderName: string | null
 ) {
   return {
     id: board.id,
@@ -26,16 +50,31 @@ function buildBoardSummary(
     pinned: membership?.pinned ?? false,
     role: membership?.role ?? null,
     isCreator: board.createdBy === userId,
+    membershipStatus: membership?.status ?? 'ACTIVE',
+    readOnly: membership?.status === 'LEFT',
+    lastCommentPreview: board.lastCommentPreview,
+    lastCommentAt: board.lastCommentAt,
+    lastCommentVisibility: board.lastCommentVisibility ?? null,
+    lastCommentAnonymous: board.lastCommentAnonymous,
+    lastCommentSenderName,
   };
 }
 
 async function getBoardMembership(userId: string, boardId: string) {
   return prisma.boardMembership.findUnique({
     where: { userId_boardId: { userId, boardId } },
+    select: {
+      userId: true,
+      boardId: true,
+      role: true,
+      pinned: true,
+      status: true,
+      leftAt: true,
+    },
   });
 }
 
-function ensureMembershipExists(membership: any) {
+function ensureMembershipExists<T>(membership: T | null | undefined): asserts membership is NonNullable<T> {
   if (!membership) {
     const error = new Error('FORBIDDEN');
     // @ts-ignore attach status
@@ -90,35 +129,69 @@ export const createBoard = async (req: Request, res: Response): Promise<void> =>
 };
 
 // ✅ Get boards where user is a member (with pinned + lastActivity)
+// TASK 2.3: Add pagination support
 export const getBoards = async (req: Request, res: Response): Promise<void> => {
   try {
-    const memberships = await prisma.boardMembership.findMany({
+    // Parse pagination params
+    const limitRaw = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+    const offsetRaw = Array.isArray(req.query.offset) ? req.query.offset[0] : req.query.offset;
+    const limit = Math.min(parseInt(String(limitRaw || '100'), 10) || 100, 200); // Max 200
+    const offset = parseInt(String(offsetRaw || '0'), 10) || 0;
+
+    // Get total count for pagination metadata
+    const total = await prisma.boardMembership.count({
       where: { userId: req.user.id },
-      include: {
-        board: {
-          select: {
-            id: true,
-            name: true,
-            code: true,
-            lastActivity: true,
-            anonymousEnabled: true,
-            createdBy: true,
-            _count: { select: { members: true } },
-          },
-        },
-      },
-      orderBy: [
-        { pinned: 'desc' },
-        { board: { lastActivity: 'desc' } },
-        { board: { name: 'asc' } },
-      ],
     });
 
-    const result = memberships.map((membership) =>
-      buildBoardSummary(membership.board, { role: membership.role, pinned: membership.pinned }, req.user.id)
+    const memberships = await prisma.boardMembership.findMany({
+      where: { userId: req.user.id },
+      select: {
+        role: true,
+        pinned: true,
+        status: true,
+        board: { select: boardSummarySelect },
+      },
+      take: limit,
+      skip: offset,
+    });
+
+    const summaries = memberships.map((membership) =>
+      buildBoardSummary(
+        membership.board,
+        {
+          role: membership.role,
+          pinned: membership.pinned,
+          status: membership.status,
+        },
+        req.user.id,
+        membership.board.lastCommentSenderName ?? null
+      )
     );
 
-    res.status(200).json(result);
+    const result = summaries.sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      const rank = (status: MembershipStatus) => (status === 'ACTIVE' ? 0 : 1);
+      const statusDiff = rank(a.membershipStatus) - rank(b.membershipStatus);
+      if (statusDiff !== 0) return statusDiff;
+      const aTime = a.lastActivity ? new Date(a.lastActivity).getTime() : 0;
+      const bTime = b.lastActivity ? new Date(b.lastActivity).getTime() : 0;
+      if (aTime !== bTime) return bTime - aTime;
+      return a.name.localeCompare(b.name);
+    });
+
+    // TASK 2.3: Return pagination metadata if pagination params were provided
+    if (limitRaw || offsetRaw) {
+      res.status(200).json({
+        boards: result,
+        total,
+        limit,
+        offset,
+        hasMore: offset + limit < total,
+      });
+    } else {
+      // Backward compatible: return array if no pagination params
+      res.status(200).json(result);
+    }
   } catch (error) {
     console.error('❌ Error fetching boards:', error);
     res.status(500).json({ message: 'Error fetching boards' });
@@ -133,11 +206,26 @@ export const getBoardById = async (req: Request, res: Response): Promise<void> =
     const membership = await getBoardMembership(req.user.id, id);
     ensureMembershipExists(membership);
 
+    // TASK 3.4: Optimize query - filter active members at database level
     const board = await prisma.board.findUnique({
       where: { id },
-      include: {
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        anonymousEnabled: true,
+        lastActivity: true,
+        createdBy: true,
         members: {
-          include: {
+          where: { status: 'ACTIVE' }, // TASK 3.4: Filter at DB level
+          select: {
+            id: true,
+            userId: true,
+            boardId: true,
+            role: true,
+            status: true,
+            leftAt: true,
+            pinned: true,
             user: { select: { id: true, name: true, email: true } },
           },
         },
@@ -146,35 +234,7 @@ export const getBoardById = async (req: Request, res: Response): Promise<void> =
 
     ensureBoardExists(board);
 
-    const admin = isAdmin(req.user.id, board, membership);
-    const orClauses: any[] = [
-      { visibility: 'EVERYONE' },
-      { createdById: req.user.id },
-    ];
-    if (admin) {
-      orClauses.push({ visibility: 'ADMIN_ONLY' });
-    }
-
-    const comments = await prisma.comment.findMany({
-      where: { boardId: id, OR: orClauses },
-      include: {
-        createdBy: { select: { id: true, name: true, email: true } },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    const shapedComments = comments.map((comment) => {
-      const isOwn = comment.createdById === req.user.id;
-      const maskedToOthers = comment.anonymous && !admin && !isOwn;
-      return {
-        id: comment.id,
-        message: comment.content,
-        visibility: comment.visibility,
-        sender: maskedToOthers ? 'Anonymous' : comment.createdBy.name,
-        actualSender: comment.anonymous && admin ? comment.createdBy.name : undefined,
-        createdAt: comment.createdAt,
-      };
-    });
+    const activeMembers = board.members; // Already filtered
 
     res.status(200).json({
       id: board.id,
@@ -182,9 +242,10 @@ export const getBoardById = async (req: Request, res: Response): Promise<void> =
       code: board.code,
       anonymousEnabled: board.anonymousEnabled,
       lastActivity: board.lastActivity,
-      members: board.members,
-      comments: shapedComments,
-      membershipRole: membership!.role,
+      members: activeMembers,
+      membershipRole: membership.role,
+      membershipStatus: membership.status,
+      readOnly: membership.status === 'LEFT',
       isCreator: board.createdBy === req.user.id,
     });
   } catch (error: any) {
@@ -207,7 +268,7 @@ export const joinBoard = async (req: Request, res: Response): Promise<void> => {
     const { code } = req.body;
     const userId = req.user.id;
 
-    const board = await prisma.board.findUnique({ where: { code } });
+    const board = await prisma.board.findUnique({ where: { code }, select: { id: true, code: true } });
     if (!board) {
       res.status(404).json({ message: 'Board not found with this code' });
       return;
@@ -220,33 +281,36 @@ export const joinBoard = async (req: Request, res: Response): Promise<void> => {
           boardId: board.id,
         },
       },
+      include: {
+        board: { select: boardSummarySelect },
+      },
     });
 
-    if (existing) {
+    if (existing && existing.status === 'ACTIVE') {
       res.status(400).json({ message: 'Already a member of this board' });
       return;
     }
 
-    const membership = await prisma.boardMembership.create({
-      data: {
-        userId,
-        boardId: board.id,
-        role: 'MEMBER',
-      },
-      include: {
-        board: {
-          select: {
-            id: true,
-            name: true,
-            code: true,
-            lastActivity: true,
-            anonymousEnabled: true,
-            createdBy: true,
-            _count: { select: { members: true } },
-          },
-        },
-      },
-    });
+    const membership =
+      existing && existing.status === 'LEFT'
+        ? await prisma.boardMembership.update({
+            where: {
+              userId_boardId: {
+                userId,
+                boardId: board.id,
+              },
+            },
+            data: { status: 'ACTIVE', leftAt: null },
+            include: { board: { select: boardSummarySelect } },
+          })
+        : await prisma.boardMembership.create({
+            data: {
+              userId,
+              boardId: board.id,
+              role: 'MEMBER',
+            },
+            include: { board: { select: boardSummarySelect } },
+          });
 
     try {
       getIO().to(board.code).emit('membership-updated', {
@@ -258,7 +322,18 @@ export const joinBoard = async (req: Request, res: Response): Promise<void> => {
       console.warn('Socket not initialised when emitting membership-updated (joined)', socketError);
     }
 
-    res.status(200).json(buildBoardSummary(membership.board, { role: membership.role, pinned: membership.pinned }, userId));
+    res.status(200).json(
+      buildBoardSummary(
+        membership.board,
+        {
+          role: membership.role,
+          pinned: membership.pinned,
+          status: membership.status,
+        },
+        userId,
+        membership.board.lastCommentSenderName ?? null
+      )
+    );
   } catch (error) {
     console.error('❌ Error joining board:', error);
     res.status(500).json({ message: 'Error joining board' });
@@ -270,11 +345,26 @@ export const getBoardByCode = async (req: Request, res: Response): Promise<void>
   try {
     const { code } = req.params;
 
+    // TASK 3.4: Optimize query - filter active members at database level
     const board = await prisma.board.findUnique({
       where: { code },
-      include: {
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        anonymousEnabled: true,
+        lastActivity: true,
+        createdBy: true,
         members: {
-          include: {
+          where: { status: 'ACTIVE' }, // TASK 3.4: Filter at DB level
+          select: {
+            id: true,
+            userId: true,
+            boardId: true,
+            role: true,
+            status: true,
+            leftAt: true,
+            pinned: true,
             user: { select: { id: true, name: true, email: true } },
           },
         },
@@ -283,40 +373,11 @@ export const getBoardByCode = async (req: Request, res: Response): Promise<void>
 
     ensureBoardExists(board);
 
-    const membership = board.members.find((member) => member.userId === req.user.id);
+    // TASK 3.4: Find membership separately if needed (for status check)
+    const membership = await getBoardMembership(req.user.id, board.id);
     ensureMembershipExists(membership);
 
-    const admin = isAdmin(req.user.id, board, membership!);
-    const orClauses: any[] = [
-      { visibility: 'EVERYONE' },
-      { createdById: req.user.id },
-    ];
-    if (admin) {
-      orClauses.push({ visibility: 'ADMIN_ONLY' });
-    }
-
-    const comments = await prisma.comment.findMany({
-      where: { boardId: board.id, OR: orClauses },
-      include: {
-        createdBy: { select: { id: true, name: true } },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    const shapedComments = comments.map((comment) => {
-      const isOwn = comment.createdById === req.user.id;
-      const maskedToOthers = comment.anonymous && !admin && !isOwn;
-      return {
-        id: comment.id,
-        message: comment.content,
-        visibility: comment.visibility,
-        sender: maskedToOthers ? 'Anonymous' : comment.createdBy.name,
-        actualSender: comment.anonymous && admin ? comment.createdBy.name : undefined,
-        createdAt: comment.createdAt,
-        userId: comment.createdById,
-        senderId: comment.createdById,
-      };
-    });
+    const activeMembers = board.members; // Already filtered
 
     res.status(200).json({
       id: board.id,
@@ -324,9 +385,10 @@ export const getBoardByCode = async (req: Request, res: Response): Promise<void>
       code: board.code,
       anonymousEnabled: board.anonymousEnabled,
       lastActivity: board.lastActivity,
-      members: board.members,
-       comments: shapedComments,
-      membershipRole: membership!.role,
+      members: activeMembers,
+      membershipRole: membership.role,
+      membershipStatus: membership.status,
+      readOnly: membership.status === 'LEFT',
       isCreator: board.createdBy === req.user.id,
     });
   } catch (error: any) {
@@ -352,7 +414,7 @@ export const updateBoardAnonymous = async (req: Request, res: Response): Promise
     ensureBoardExists(board);
 
     const membership = await getBoardMembership(req.user.id, id);
-    if (!isAdmin(req.user.id, board, membership)) {
+    if (!membership || membership.status !== 'ACTIVE' || !isAdmin(req.user.id, board, membership)) {
       res.status(403).json({ message: 'Only admins can change anonymous settings' });
       return;
     }
@@ -384,25 +446,32 @@ export const updateBoardPin = async (req: Request, res: Response): Promise<void>
     const { id } = req.params;
     const { pinned } = req.body as { pinned: boolean };
 
+    const member = await prisma.boardMembership.findUnique({
+      where: { userId_boardId: { userId: req.user.id, boardId: id } },
+      select: { status: true },
+    });
+
+    if (!member || member.status !== 'ACTIVE') {
+      res.status(403).json({ message: 'Only active members can update pinned status' });
+      return;
+    }
+
     const membership = await prisma.boardMembership.update({
       where: { userId_boardId: { userId: req.user.id, boardId: id } },
       data: { pinned },
       include: {
-        board: {
-          select: {
-            id: true,
-            name: true,
-            code: true,
-            lastActivity: true,
-            anonymousEnabled: true,
-            createdBy: true,
-            _count: { select: { members: true } },
-          },
-        },
+        board: { select: boardSummarySelect },
       },
     });
 
-    res.json(buildBoardSummary(membership.board, { role: membership.role, pinned: membership.pinned }, req.user.id));
+    res.json(
+      buildBoardSummary(
+        membership.board,
+        { role: membership.role, pinned: membership.pinned, status: membership.status },
+        req.user.id,
+        membership.board.lastCommentSenderName ?? null
+      )
+    );
   } catch (error) {
     console.error('❌ Error updating pinned status:', error);
     res.status(500).json({ message: 'Error updating pinned status' });
@@ -425,7 +494,19 @@ export const leaveBoard = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    await prisma.boardMembership.delete({ where: { userId_boardId: { userId: req.user.id, boardId: id } } });
+    if (membership.status === 'LEFT') {
+      res.status(204).send();
+      return;
+    }
+
+    await prisma.boardMembership.update({
+      where: { userId_boardId: { userId: req.user.id, boardId: id } },
+      data: {
+        status: 'LEFT',
+        leftAt: new Date(),
+        pinned: false,
+      },
+    });
 
     try {
       getIO().to(membership.board.code).emit('membership-updated', {
@@ -455,7 +536,7 @@ export const deleteBoard = async (req: Request, res: Response): Promise<void> =>
     ensureBoardExists(board);
 
     const membership = await getBoardMembership(req.user.id, id);
-    if (!isAdmin(req.user.id, board, membership)) {
+    if (!membership || membership.status !== 'ACTIVE' || !isAdmin(req.user.id, board, membership)) {
       res.status(403).json({ message: 'Only admins can delete this board' });
       return;
     }

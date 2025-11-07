@@ -18,40 +18,70 @@ export function getIO() {
 
 export function setupSocket(server: http.Server) {
   const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "*";
+  const LOG_LEVEL = process.env.SOCKET_LOG_LEVEL || (process.env.NODE_ENV === "production" ? "error" : "debug");
+  
   ioInstance = new Server(server, {
     cors: {
       origin: FRONTEND_ORIGIN === "*" ? true : FRONTEND_ORIGIN.split(",").map((s) => s.trim()),
       methods: ["GET", "POST"],
       credentials: true,
     },
+    transports: ["websocket", "polling"],
+    pingTimeout: 20000,
+    pingInterval: 25000,
+    allowEIO3: true,
   });
 
   const io = getIO();
 
   io.on("connection", (socket) => {
-    console.log("🔌 New client connected:", socket.id);
+    const isDev = process.env.NODE_ENV !== "production";
+    const shouldLog = LOG_LEVEL === "debug" || isDev;
+    
+    if (shouldLog) {
+      console.log("🔌 New client connected:", socket.id);
+    }
 
     socket.on("join-board", ({ boardCode, name }) => {
       socket.join(boardCode);
       userMap.set(socket.id, { name, boardCode });
-      console.log(`📥 ${name} joined board: ${boardCode}`);
+      if (shouldLog) {
+        console.log(`📥 ${name} joined board: ${boardCode}`);
+      }
       socket.to(boardCode).emit("user-joined", { name });
+      socket.emit("joined-room", { boardCode });
     });
 
-    socket.on("send-message", ({ boardCode, message, sender, visibility, actualSender, senderId, clientMessageId }) => {
-      // Normalize visibility to match API enums
-      const normalizedVisibility = visibility === "ADMIN_ONLY" ? "ADMIN_ONLY" : "EVERYONE";
-      const dataToSend = { message, sender, visibility: normalizedVisibility, actualSender, senderId, clientMessageId };
-      io.to(boardCode).emit("receive-message", dataToSend);
+    socket.on("send-message", () => {
+      // No-op: REST pipeline broadcasts messages to avoid duplicates.
     });
 
-    socket.on("disconnect", () => {
+    socket.on("disconnect", (reason) => {
       const user = userMap.get(socket.id);
       if (user) {
-        console.log(`❌ ${user.name} disconnected from board: ${user.boardCode}`);
+        if (shouldLog) {
+          console.log(`❌ ${user.name} disconnected from board: ${user.boardCode}, reason: ${reason}`);
+        }
         socket.to(user.boardCode).emit("user-left", { name: user.name });
         userMap.delete(socket.id);
       }
     });
   });
+  
+  // Log connection errors
+  io.engine.on("connection_error", (err) => {
+    if (LOG_LEVEL === "debug" || process.env.NODE_ENV !== "production") {
+      console.error("Socket.io connection error:", err);
+    }
+  });
+}
+
+export function isSocketConnected(): boolean {
+  if (!ioInstance) return false;
+  return ioInstance.sockets.sockets.size > 0;
+}
+
+export function getConnectedClientsCount(): number {
+  if (!ioInstance) return 0;
+  return ioInstance.sockets.sockets.size;
 }

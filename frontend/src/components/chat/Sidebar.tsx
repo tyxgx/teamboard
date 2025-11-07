@@ -1,33 +1,48 @@
-import { useEffect, useMemo, useState, type FC, type ReactNode } from "react";
+import React, { useMemo, useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
-type BoardItem = {
+type MembershipStatus = "ACTIVE" | "LEFT";
+
+export type SidebarBoard = {
   id: string;
   code: string;
   name: string;
+  pinned: boolean;
+  lastActivity: string | null;
+  lastCommentPreview: string | null;
+  lastCommentAt: string | null;
+  lastCommentVisibility: "EVERYONE" | "ADMIN_ONLY" | null;
+  lastCommentAnonymous: boolean;
+  lastCommentSenderName: string | null;
+  membershipStatus: MembershipStatus;
+  readOnly: boolean;
+  unread: number;
 };
 
 type SidebarProps = {
-  boards: BoardItem[];
-  activeCode?: string;
-  pinned?: string[];
-  lastActivity?: Record<string, string | undefined>;
-  onSelectBoard?: (code: string) => void;
-  onTogglePin?: (code: string) => void;
-  onRequestLeave?: (board: BoardItem) => void;
-  onRequestDelete?: (board: BoardItem) => void;
-  isAdmin?: boolean;
+  boards: SidebarBoard[];
+  activeCode?: string | null;
+  unreadByBoard: Record<string, number>;
+  onSelectBoard: (code: string) => void;
+  onTogglePin: (code: string) => void;
+  onHideBoard: (board: { id: string; code: string; name: string }) => void;
+  onLeaveBoard: (board: { id: string; code: string; name: string }) => void;
+  onCreateBoard: () => void;
+  onJoinBoard: () => void;
+  onLogout: () => void;
+  showFooterActions: boolean;
+  variant?: "desktop" | "mobile";
+  onClose?: () => void;
+  onPrefetchBoard?: (code: string) => void;
 };
 
-const formatTime = (iso?: string) => {
+const formatRelative = (iso?: string | null) => {
   if (!iso) return "";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";
-
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
   if (diffDays === 0) {
     return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
@@ -37,83 +52,149 @@ const formatTime = (iso?: string) => {
   return date.toLocaleDateString([], { month: "short", day: "numeric" });
 };
 
-export const Sidebar: FC<SidebarProps> = ({
+const buildPreview = (board: SidebarBoard) => {
+  if (!board.lastCommentPreview) return "No messages yet";
+  const label =
+    board.lastCommentAnonymous && board.lastCommentSenderName
+      ? `Anonymous (${board.lastCommentSenderName})`
+      : board.lastCommentAnonymous
+      ? "Anonymous"
+      : board.lastCommentSenderName ?? "Someone";
+  return `${label}: ${board.lastCommentPreview}`;
+};
+
+export const Sidebar = React.memo(({
   boards,
   activeCode,
-  pinned = [],
-  lastActivity = {},
+  unreadByBoard,
   onSelectBoard,
   onTogglePin,
-  onRequestLeave,
-  onRequestDelete,
-  isAdmin = false,
-}) => {
+  onHideBoard,
+  onLeaveBoard,
+  onCreateBoard,
+  onJoinBoard,
+  onLogout,
+  showFooterActions,
+  variant = "desktop",
+  onClose,
+  onPrefetchBoard,
+}: SidebarProps) => {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
-
-  const closeMenu = () => setMenuOpen(null);
-
-  const handleSelect = (board: BoardItem) => {
-    if (onSelectBoard) {
-      onSelectBoard(board.code);
-    } else {
-      navigate(`/board/${board.code}`);
-    }
-    closeMenu();
-  };
-
-  const handlePin = (board: BoardItem) => {
-    onTogglePin?.(board.code);
-    closeMenu();
-  };
-
-  const handleLeave = (board: BoardItem) => {
-    onRequestLeave?.(board);
-    closeMenu();
-  };
-
-  const handleDelete = (board: BoardItem) => {
-    onRequestDelete?.(board);
-    closeMenu();
-  };
-
-  useEffect(() => {
-    const handleDocumentClick = () => setMenuOpen(null);
-    document.addEventListener("mousedown", handleDocumentClick);
-    return () => document.removeEventListener("mousedown", handleDocumentClick);
-  }, []);
-
-  const sortedBoards = useMemo(() => {
-    const pinnedSet = new Set(pinned);
-    return [...boards].sort((a, b) => {
-      const aPinned = pinnedSet.has(a.code);
-      const bPinned = pinnedSet.has(b.code);
-      if (aPinned && !bPinned) return -1;
-      if (!aPinned && bPinned) return 1;
-
-      const aTime = lastActivity[a.code] ? new Date(lastActivity[a.code]!).getTime() : 0;
-      const bTime = lastActivity[b.code] ? new Date(lastActivity[b.code]!).getTime() : 0;
-      if (aTime !== bTime) {
-        return bTime - aTime; // newest first
-      }
-
-      return a.name.localeCompare(b.name);
-    });
-  }, [boards, pinned, lastActivity]);
+  const [accountMenu, setAccountMenu] = useState(false);
+  const prefetchTimeoutRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // TASK 3.5: Intersection Observer for intelligent prefetching
+  const boardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   const filteredBoards = useMemo(() => {
-    const lower = query.toLowerCase();
-    return sortedBoards.filter((board) => board.name.toLowerCase().includes(lower));
-  }, [sortedBoards, query]);
+    const trimmed = query.trim().toLowerCase();
+    if (!trimmed) return boards;
+    return boards.filter((board) => board.name.toLowerCase().includes(trimmed));
+  }, [boards, query]);
+
+  // TASK 3.5: Intersection Observer for prefetching boards near viewport
+  useEffect(() => {
+    if (!onPrefetchBoard) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting && entry.target instanceof HTMLElement) {
+            const boardCode = entry.target.dataset.boardCode;
+            if (boardCode && !prefetchTimeoutRef.current[boardCode]) {
+              // Prefetch when board is visible in viewport (with small delay)
+              prefetchTimeoutRef.current[boardCode] = setTimeout(() => {
+                onPrefetchBoard(boardCode);
+                delete prefetchTimeoutRef.current[boardCode];
+              }, 300);
+            }
+          }
+        });
+      },
+      {
+        rootMargin: '100px', // Start prefetching 100px before board enters viewport
+        threshold: 0.1,
+      }
+    );
+
+    // Observe all board elements
+    Object.values(boardRefs.current).forEach((ref) => {
+      if (ref) observer.observe(ref);
+    });
+
+    return () => {
+      observer.disconnect();
+      // Clear any pending prefetches
+      Object.values(prefetchTimeoutRef.current).forEach((timeout) => clearTimeout(timeout));
+      prefetchTimeoutRef.current = {};
+    };
+  }, [filteredBoards, onPrefetchBoard]);
+
+  const closeMenus = () => {
+    setMenuOpen(null);
+    setAccountMenu(false);
+  };
+
+  const closeIfMobile = () => {
+    if (variant === "mobile" && onClose) {
+      onClose();
+    }
+  };
+
+  const containerClass =
+    variant === "mobile"
+      ? "flex h-full w-[85vw] max-w-[320px] flex-col bg-slate-900/95 text-slate-100 md:hidden"
+      : "hidden h-full flex-col bg-slate-900/95 text-slate-100 md:flex md:w-[300px]";
 
   return (
-    <aside className="flex h-full w-[300px] flex-col bg-slate-900/95 text-slate-200">
-      <div className="px-5 pb-1 pt-6">
-        <h1 className="text-2xl font-bold text-emerald-400">TeamBoard</h1>
+    <aside className={containerClass}>
+      <div className="flex items-center justify-between px-5 pb-4 pt-6">
+        <button
+          type="button"
+          className="text-left"
+          onClick={() => {
+            closeMenus();
+            navigate("/app");
+          }}
+        >
+          <h1 className="text-2xl font-bold text-emerald-400">TeamBoard</h1>
+          <p className="text-xs text-slate-400">Live, anonymous team feedback</p>
+        </button>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setAccountMenu((prev) => !prev);
+            }}
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-800 text-lg transition hover:bg-slate-700"
+            aria-label="Account menu"
+          >
+            ⋮
+          </button>
+          {accountMenu ? (
+            <div
+              className="absolute right-0 z-30 mt-2 w-44 rounded-xl bg-slate-800/95 py-2 text-sm shadow-xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  closeMenus();
+                  closeIfMobile();
+                  onLogout();
+                }}
+                className="block w-full px-4 py-2 text-left text-slate-200 transition hover:bg-slate-700/50"
+              >
+                Logout
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
 
-      <div className="px-5 pb-3 pt-4">
+      <div className="px-5 pb-4">
         <div className="flex items-center gap-2 rounded-full bg-slate-800/80 px-4 py-2 text-sm text-slate-300">
           <span aria-hidden>🔍</span>
           <input
@@ -127,29 +208,66 @@ export const Sidebar: FC<SidebarProps> = ({
       </div>
 
       <div className="flex-1 overflow-y-auto px-3 pb-6">
-        {filteredBoards.length === 0 ? (
-          <p className="px-2 text-xs text-slate-500">No boards found.</p>
+        {boards.length === 0 ? (
+          // Show skeleton loaders while loading
+          <div className="space-y-1.5">
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 animate-pulse">
+                <div className="h-9 w-9 shrink-0 rounded-full bg-slate-700/60" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-4 w-24 rounded bg-slate-700/60" />
+                  <div className="h-3 w-32 rounded bg-slate-700/40" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : filteredBoards.length === 0 ? (
+          <p className="px-3 text-xs text-slate-500">No boards found.</p>
         ) : (
           <div className="space-y-1.5">
             {filteredBoards.map((board) => {
               const isActive = board.code === activeCode;
-              const timeLabel = formatTime(lastActivity[board.code]);
-              const pinnedLabel = pinned.includes(board.code);
+              const isReadOnly = board.readOnly;
+              const unread = unreadByBoard[board.code] ?? board.unread ?? 0;
+              const preview = buildPreview(board);
+              const timeLabel = formatRelative(board.lastCommentAt ?? board.lastActivity);
 
               return (
                 <div key={board.id} className="group relative">
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => handleSelect(board)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        handleSelect(board);
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeMenus();
+                      closeIfMobile();
+                      // Clear any pending prefetch
+                      if (prefetchTimeoutRef.current[board.code]) {
+                        clearTimeout(prefetchTimeoutRef.current[board.code]);
+                        delete prefetchTimeoutRef.current[board.code];
+                      }
+                      onSelectBoard(board.code);
+                    }}
+                    ref={(el) => {
+                      // TASK 3.5: Store ref for Intersection Observer
+                      boardRefs.current[board.code] = el;
+                    }}
+                    data-board-code={board.code}
+                    onMouseEnter={() => {
+                      // TASK 3.5: Prefetch on hover with delay (fallback if Intersection Observer hasn't triggered)
+                      if (!isActive && onPrefetchBoard && !prefetchTimeoutRef.current[board.code]) {
+                        prefetchTimeoutRef.current[board.code] = setTimeout(() => {
+                          onPrefetchBoard(board.code);
+                        }, 200);
                       }
                     }}
-                    className={`flex w-full items-center gap-3 rounded-xl px-3 pr-12 py-2 text-left transition focus:outline-none focus:ring-2 focus:ring-emerald-400/60 ${
-                      isActive ? "bg-slate-700/60" : "hover:bg-slate-700/40"
+                    onMouseLeave={() => {
+                      // Cancel prefetch if user moves away
+                      if (prefetchTimeoutRef.current[board.code]) {
+                        clearTimeout(prefetchTimeoutRef.current[board.code]);
+                        delete prefetchTimeoutRef.current[board.code];
+                      }
+                    }}
+                    className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition ${
+                      isActive ? "bg-slate-700/60 shadow-inner" : "hover:bg-slate-700/40"
                     }`}
                   >
                     <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-600/80 text-sm font-semibold text-slate-100">
@@ -160,58 +278,79 @@ export const Sidebar: FC<SidebarProps> = ({
                         .slice(0, 2)
                         .toUpperCase()}
                     </div>
-
                     <div className="min-w-0 flex-1">
-                      <p className={`truncate text-sm font-semibold text-slate-100 ${isActive ? "" : "group-hover:text-white"}`}>
-                        {board.name}
-                        {pinnedLabel ? <span className="ml-2 text-xs text-emerald-400">pinned</span> : null}
-                      </p>
-                      <p className="truncate text-xs text-slate-400">{timeLabel || "No activity yet"}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-sm font-semibold text-slate-100">{board.name}</p>
+                        {board.pinned ? (
+                          <span className="text-xs uppercase tracking-wide text-emerald-400">Pinned</span>
+                        ) : null}
+                        {isReadOnly ? (
+                          <span className="text-xs uppercase tracking-wide text-amber-400">Read only</span>
+                        ) : null}
+                      </div>
+                      <p className="truncate text-xs text-slate-400">{preview}</p>
                     </div>
+                    <div className="flex shrink-0 flex-col items-end gap-1">
+                      {timeLabel ? (
+                        <span className="text-xs text-slate-400">{timeLabel}</span>
+                      ) : null}
+                      {unread > 0 ? (
+                        <span className="grid h-5 min-w-[20px] place-items-center rounded-full bg-emerald-500 px-2 text-[11px] font-semibold text-white">
+                          {unread > 99 ? "99+" : unread}
+                        </span>
+                      ) : null}
+                    </div>
+                  </button>
 
-                    <span className="ml-2 text-xs text-slate-400">{timeLabel}</span>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setMenuOpen((prev) => (prev === board.id ? null : board.id));
+                    }}
+                    className="absolute right-2 top-1/2 hidden -translate-y-1/2 rounded-full p-1 text-slate-400 transition hover:bg-slate-700/60 group-hover:block"
+                    aria-label="Board actions"
+                  >
+                    ⋮
+                  </button>
 
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setMenuOpen((prev) => (prev === board.code ? null : board.code));
-                      }}
-                      onMouseDown={(event) => {
-                        event.stopPropagation();
-                        event.preventDefault();
-                      }}
-                      className="absolute right-2 top-1/2 hidden -translate-y-1/2 rounded-full p-1 text-slate-400 transition hover:bg-slate-700/50 group-hover:block"
-                      aria-label="More options"
-                    >
-                      ⋮
-                    </button>
-                  </div>
-
-                  {menuOpen === board.code ? (
-                    <div
-                      className="absolute right-0 top-full z-30 mt-2 w-44 rounded-xl bg-slate-800/95 py-2 text-sm text-slate-100 shadow-xl"
-                      onMouseDown={(event) => event.stopPropagation()}
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      <MenuItem onClick={() => handlePin(board)}>
-                        {pinnedLabel ? "Unpin chat" : "Pin chat"}
-                      </MenuItem>
-                      <MenuItem
+                  {menuOpen === board.id ? (
+                    <div className="absolute right-0 top-full z-30 mt-2 w-52 rounded-xl bg-slate-800/95 py-2 text-sm text-slate-100 shadow-xl">
+                      <button
+                        type="button"
                         onClick={() => {
-                          console.log("TODO: mark as unread", board.code);
-                          closeMenu();
+                          closeMenus();
+                          closeIfMobile();
+                          onTogglePin(board.code);
                         }}
+                        className="block w-full px-4 py-2 text-left transition hover:bg-slate-700/50"
                       >
-                        Mark as unread
-                      </MenuItem>
-                      <MenuItem onClick={() => handleLeave(board)}>Leave board</MenuItem>
-                      <MenuItem
-                        onClick={() => handleDelete(board)}
-                        disabled={!isAdmin}
+                        {board.pinned ? "Unpin board" : "Pin board"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          closeMenus();
+                          closeIfMobile();
+                          onHideBoard(board);
+                        }}
+                        className="block w-full px-4 py-2 text-left transition hover:bg-slate-700/50"
                       >
-                        Delete board
-                      </MenuItem>
+                        Remove from sidebar
+                      </button>
+                      {board.membershipStatus === "ACTIVE" ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            closeMenus();
+                            closeIfMobile();
+                            onLeaveBoard(board);
+                          }}
+                          className="block w-full px-4 py-2 text-left text-red-300 transition hover:bg-red-500/20 hover:text-red-100"
+                        >
+                          Leave board
+                        </button>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -220,23 +359,35 @@ export const Sidebar: FC<SidebarProps> = ({
           </div>
         )}
       </div>
+
+      {showFooterActions ? (
+        <div className="border-t border-slate-800/60 bg-slate-900/70 px-4 py-4">
+          <div className="flex flex-col gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                closeMenus();
+                closeIfMobile();
+                onCreateBoard();
+              }}
+              className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-600"
+            >
+              Create new board
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                closeMenus();
+                closeIfMobile();
+                onJoinBoard();
+              }}
+              className="rounded-full border border-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-500 transition hover:bg-emerald-500/10"
+            >
+              Join with code
+            </button>
+          </div>
+        </div>
+      ) : null}
     </aside>
   );
-};
-
-type MenuItemProps = {
-  children: ReactNode;
-  onClick: () => void;
-  disabled?: boolean;
-};
-
-const MenuItem: FC<MenuItemProps> = ({ children, onClick, disabled = false }) => (
-  <button
-    type="button"
-    onClick={disabled ? undefined : onClick}
-    className={`flex w-full items-center px-4 py-2 text-left text-xs transition hover:bg-slate-700/70 ${disabled ? "cursor-not-allowed opacity-40" : ""}`}
-    disabled={disabled}
-  >
-    {children}
-  </button>
-);
+});

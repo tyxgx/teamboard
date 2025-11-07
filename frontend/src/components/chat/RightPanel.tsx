@@ -1,125 +1,140 @@
-import type { FC } from "react";
-
 type Member = {
+  id: string;
   userId: string;
   role: "ADMIN" | "MEMBER";
-  name?: string;
+  user: { id: string; name: string; email: string };
 };
+
+import { useState } from "react";
 
 type RightPanelProps = {
-  boardCode: string;
-  adminName?: string;
-  members: Member[];
+  board?: {
+    code: string;
+    members: Member[];
+    anonymousEnabled: boolean;
+  } | null;
   isAdmin: boolean;
-  anonymousEnabled: boolean;
+  isReadOnly: boolean;
   onToggleAnonymous: (enabled: boolean) => void;
-  onRequestLeave?: () => void;
-  onRequestDelete?: () => void;
+  onCopyInvite: (code: string) => void;
+  onClose?: () => void;
+  isVisible: boolean;
+  variant?: "desktop" | "mobile";
 };
 
-export const RightPanel: FC<RightPanelProps> = ({
-  boardCode,
-  adminName,
-  members,
+const roleLabel = (role: "ADMIN" | "MEMBER") => (role === "ADMIN" ? "Admin" : "Member");
+
+export const RightPanel = ({
+  board,
   isAdmin,
-  anonymousEnabled,
+  isReadOnly,
   onToggleAnonymous,
-  onRequestLeave,
-  onRequestDelete,
-}) => {
-  const toggle = () => {
-    if (!isAdmin) return;
-    onToggleAnonymous(!anonymousEnabled);
+  onCopyInvite,
+  onClose,
+  isVisible,
+  variant = "desktop",
+}: RightPanelProps) => {
+  if (!board || !isVisible) return null;
+
+  const containerClass =
+    variant === "mobile"
+      ? "flex h-full w-full flex-col overflow-y-auto bg-white p-6"
+      : "hidden h-full w-[320px] flex-col overflow-y-auto border-l border-slate-200 bg-white p-6 lg:flex";
+
+  const memberCount = board.members.length;
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    onCopyInvite(board.code);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
   };
 
   return (
-    <aside className="hidden h-full w-[280px] flex-col overflow-y-auto border-l border-slate-200 bg-slate-50/80 p-6 xl:flex">
-      <div className="rounded-2xl bg-white p-5 shadow-sm">
-        <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Board code</p>
-        <p className="mt-1 select-all text-lg font-semibold text-slate-900">{boardCode}</p>
-        <p className="mt-3 text-sm text-slate-500">
-          Share this code with teammates so they can join the space. Only admins can manage anonymous
-          messaging.
-        </p>
-      </div>
+    <aside className={`relative ${containerClass}`}>
+      {onClose ? (
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-base text-slate-600 transition hover:bg-slate-200 lg:hidden"
+          aria-label="Close details"
+        >
+          ✕
+        </button>
+      ) : null}
 
-      <div className="mt-6 rounded-2xl bg-white p-5 shadow-sm">
-        <h3 className="text-sm font-semibold text-slate-900">Members</h3>
-        <p className="text-xs text-slate-500">Admins are highlighted with a badge.</p>
-        <ul className="mt-4 space-y-3">
-          {members.length === 0 ? (
-            <li className="rounded-xl bg-slate-100 px-3 py-2 text-xs text-slate-500">No members found.</li>
+      <section className="rounded-2xl bg-slate-50 px-5 py-4 shadow-sm">
+        <h3 className="text-xs font-semibold uppercase tracking-widest text-slate-500">Invite code</h3>
+        <p className="mt-2 select-all text-lg font-semibold text-slate-900">{board.code}</p>
+        <div className="mt-3 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="inline-flex items-center gap-2 rounded-full border border-emerald-500 px-4 py-2 text-xs font-semibold text-emerald-600 transition hover:bg-emerald-50"
+          >
+            Copy invite link
+          </button>
+          {copied ? <span className="text-xs font-medium text-emerald-600">Copied!</span> : null}
+        </div>
+        <p className="mt-4 text-xs text-slate-500">
+          Share this link with teammates to let them join instantly. Codes work on desktop and mobile.
+        </p>
+      </section>
+
+      <section className="mt-6 rounded-2xl bg-slate-50 px-5 py-4 shadow-sm">
+        <h3 className="text-sm font-semibold text-slate-900">Members ({memberCount})</h3>
+        <ul className="mt-4 space-y-2">
+          {board.members.length === 0 ? (
+            <li className="rounded-xl bg-white px-3 py-2 text-xs text-slate-500">No members yet.</li>
           ) : (
-            members.map((member) => {
-              const displayName = member.name ?? member.userId.slice(0, 8);
-              const isAdmin = member.role === "ADMIN";
-              return (
-                <li key={member.userId} className="flex items-center justify-between rounded-xl bg-slate-100 px-3 py-2 text-sm text-slate-700">
-                  <span className="font-medium">{displayName}</span>
-                  {isAdmin ? (
-                    <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
-                      Admin
-                    </span>
-                  ) : (
-                    <span className="text-[11px] text-slate-400">Member</span>
-                  )}
-                </li>
-              );
-            })
+            board.members.map((member) => (
+              <li key={member.userId} className="flex items-center justify-between rounded-xl bg-white px-3 py-2 text-sm text-slate-700">
+                <span className="font-medium">{member.user.name}</span>
+                <span
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                    member.role === "ADMIN" ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"
+                  }`}
+                >
+                  {roleLabel(member.role)}
+                </span>
+              </li>
+            ))
           )}
         </ul>
-        <div className="mt-4 flex flex-col gap-2">
-          <button
-            type="button"
-            onClick={onRequestLeave}
-            className="w-full rounded-full border border-red-200 px-3 py-2 text-xs font-semibold text-red-500 transition hover:bg-red-50"
-          >
-            Leave board
-          </button>
-          <button
-            type="button"
-            onClick={onRequestDelete}
-            className="w-full rounded-full border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-100"
-          >
-            Delete board
-          </button>
-        </div>
-      </div>
+        {isReadOnly ? (
+          <p className="mt-4 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            You left this board. Rejoin to post new messages.
+          </p>
+        ) : null}
+      </section>
 
-      <div className="mt-6 rounded-2xl bg-white p-5 shadow-sm text-sm text-slate-600">
-        <h3 className="text-sm font-semibold text-slate-900">Anonymous mode</h3>
-        <div className="mt-3 flex items-center justify-between">
-          <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
-            {anonymousEnabled ? "Enabled" : "Disabled"}
-          </span>
+      <section className="mt-6 rounded-2xl bg-slate-50 px-5 py-4 shadow-sm text-sm text-slate-600">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900">Anonymous messages</h3>
+            <p className="text-xs text-slate-500">
+              When enabled, members can post without showing their names. Admins always see the real sender.
+            </p>
+          </div>
           <button
             type="button"
             role="switch"
-            aria-checked={anonymousEnabled}
-            aria-label="Toggle anonymous mode"
-            disabled={!isAdmin}
-            onClick={toggle}
-            className={`relative h-6 w-11 rounded-full transition ${
-              anonymousEnabled ? "bg-emerald-500" : "bg-slate-300"
-            } ${isAdmin ? "" : "opacity-60 cursor-not-allowed"}`}
+            aria-checked={board.anonymousEnabled}
+            aria-label="Toggle anonymous messaging"
+            disabled={!isAdmin || isReadOnly}
+            onClick={() => onToggleAnonymous(!board.anonymousEnabled)}
+            className={`relative ml-3 h-6 w-11 rounded-full transition ${
+              board.anonymousEnabled ? "bg-emerald-500" : "bg-slate-300"
+            } ${(isAdmin && !isReadOnly) ? "" : "cursor-not-allowed opacity-60"}`}
           >
             <span
               className={`absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-white shadow transition-transform ${
-                anonymousEnabled ? "translate-x-6" : "translate-x-1"
+                board.anonymousEnabled ? "translate-x-6" : "translate-x-1"
               }`}
             />
           </button>
         </div>
-        <p className="mt-2">
-          When enabled by admins, anyone can post messages without revealing their name. Admins can still
-          see who sent an anonymous message to maintain accountability.
-        </p>
-        {adminName ? (
-          <p className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-            Admin contact: {adminName}
-          </p>
-        ) : null}
-      </div>
+      </section>
     </aside>
   );
 };
