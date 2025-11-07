@@ -6,7 +6,7 @@ type ChatHeaderProps = {
 };
 
 export const ChatHeader = ({ title, onOpenSidebar, onOpenRightPanel, socketConnected = true }: ChatHeaderProps) => (
-  <header className="flex min-h-[64px] items-center justify-between border-b border-slate-200 bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100 px-4 py-3 md:min-h-[76px] md:px-6 md:py-4">
+  <header className="flex min-h-[64px] items-center justify-between border-b border-slate-200 bg-white px-4 py-3 md:min-h-[76px] md:px-6 md:py-4">
     <button
       type="button"
       onClick={onOpenSidebar}

@@ -78,7 +78,7 @@ export const ChatComposer = ({
         event.preventDefault();
         trySendMessage();
       }}
-      className="shrink-0 border-t border-slate-200 bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100 px-3 pb-4 pt-3 md:px-4"
+      className="shrink-0 border-t border-slate-200 bg-white px-3 pb-4 pt-3 md:px-4"
     >
       {readOnly && readOnlyMessage ? (
         <div className="mx-auto mb-3 max-w-3xl rounded-full bg-amber-50 px-4 py-2 text-xs font-medium text-amber-700">

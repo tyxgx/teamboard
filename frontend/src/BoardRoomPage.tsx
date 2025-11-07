@@ -188,7 +188,6 @@ export default function BoardRoomPage() {
   const [joinBoardError, setJoinBoardError] = useState<string | null>(null);
   const [initialLoadProgress, setInitialLoadProgress] = useState(0);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
-  const [isDarkMode, setIsDarkMode] = useState(false);
   const [createBoardName, setCreateBoardName] = useState("");
   const [joinCodeValue, setJoinCodeValue] = useState("");
 
@@ -614,18 +613,6 @@ export default function BoardRoomPage() {
     },
     [getAuthHeaders, handleAuthFailure, mergeIncomingMessages]
   );
-
-  // Sync dark mode state with DOM on mount
-  useEffect(() => {
-    const saved = localStorage.getItem('darkMode');
-    const shouldBeDark = saved === 'true';
-    setIsDarkMode(shouldBeDark);
-    if (shouldBeDark) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, []);
 
   useEffect(() => {
     const headers = getAuthHeaders();
@@ -1656,7 +1643,7 @@ export default function BoardRoomPage() {
   } as const;
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-100 dark:bg-slate-900">
+    <div className="flex h-screen overflow-hidden bg-slate-100">
       {isInitialLoad && user ? (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white">
           <div className="w-full max-w-md px-6">
@@ -1849,24 +1836,6 @@ export default function BoardRoomPage() {
         error={joinBoardError}
       />
       
-      {/* Dark mode toggle button */}
-      <button
-        type="button"
-        onClick={() => {
-          const newDarkMode = !isDarkMode;
-          setIsDarkMode(newDarkMode);
-          if (newDarkMode) {
-            document.documentElement.classList.add('dark');
-          } else {
-            document.documentElement.classList.remove('dark');
-          }
-          localStorage.setItem('darkMode', newDarkMode.toString());
-        }}
-        className="fixed bottom-6 right-6 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-slate-800 text-white shadow-lg transition hover:bg-slate-700 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-slate-300"
-        aria-label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
-      >
-        {isDarkMode ? "☀️" : "🌙"}
-      </button>
     </div>
   );
 }

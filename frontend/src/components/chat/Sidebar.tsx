@@ -147,12 +147,8 @@ export const Sidebar = React.memo(({
       ? "flex h-full w-[85vw] max-w-[320px] flex-col bg-slate-900/95 text-slate-100 md:hidden"
       : "hidden h-full flex-col bg-slate-900/95 text-slate-100 md:flex md:w-[300px]";
 
-  const darkContainerClass = containerClass.includes('bg-white') 
-    ? containerClass.replace('bg-white', 'bg-white dark:bg-slate-900 dark:border-slate-700 dark:text-slate-100')
-    : containerClass;
-  
   return (
-    <aside className={darkContainerClass}>
+    <aside className={containerClass}>
       <div className="flex items-center justify-between px-5 pb-4 pt-6">
         <button
           type="button"

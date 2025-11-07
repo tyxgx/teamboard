@@ -38,8 +38,8 @@ export const RightPanel = ({
 
   const containerClass =
     variant === "mobile"
-      ? "flex h-full w-full flex-col overflow-y-auto bg-white dark:bg-slate-800 dark:text-slate-100 p-6"
-      : "hidden h-full w-[320px] flex-col overflow-y-auto border-l border-slate-200 bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100 p-6 lg:flex";
+      ? "flex h-full w-full flex-col overflow-y-auto bg-white p-6"
+      : "hidden h-full w-[320px] flex-col overflow-y-auto border-l border-slate-200 bg-white p-6 lg:flex";
 
   const memberCount = board.members.length;
   const [copied, setCopied] = useState(false);

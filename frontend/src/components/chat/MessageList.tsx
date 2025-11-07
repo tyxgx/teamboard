@@ -266,7 +266,7 @@ export const MessageList = ({
     <div className="relative flex-1 overflow-hidden">
       {shouldVirtualize ? (
         // TASK 2.2: Virtualized rendering for large message lists
-        <div ref={containerRef} className="h-full bg-white dark:bg-slate-800 dark:text-slate-100">
+        <div ref={containerRef} className="h-full bg-white">
           {/* Loading indicator for older messages */}
           {(isLoadingOlder || isLoadingOlderState) && messages.length > 0 && hasMoreMessages !== false ? (
             <div className="flex justify-center py-2">
@@ -300,7 +300,7 @@ export const MessageList = ({
         <div
           ref={containerRef}
           onScroll={updateNearBottom}
-          className="h-full overflow-y-auto bg-white dark:bg-slate-800 dark:text-slate-100 px-3 py-4 md:px-6 md:py-6"
+          className="h-full overflow-y-auto bg-white px-3 py-4 md:px-6 md:py-6"
           style={{ scrollBehavior: "smooth" }}
         >
           <div ref={topSentinelRef} />
