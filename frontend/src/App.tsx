@@ -1,6 +1,7 @@
-import { useEffect, Suspense } from "react";
+import { useEffect, Suspense, lazy } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import BoardRoomPage from "./BoardRoomPage";
+// TASK 3.1: Lazy load BoardRoomPage for code splitting
+const BoardRoomPage = lazy(() => import("./BoardRoomPage"));
 
 const REDIRECT_KEY = "tb.redirect";
 

@@ -209,9 +209,144 @@ export const getComments = async (req: Request, res: Response) => {
     }
 
     // Parse pagination params
+    // TASK 1.2: Reduced default limit from 100 to 50 for faster first load
+    // TASK 2.4: Support cursor-based pagination (preferred) with backward-compatible offset
+    const limitRaw = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+    const cursorRaw = Array.isArray(req.query.cursor) ? req.query.cursor[0] : req.query.cursor;
+    const offsetRaw = Array.isArray(req.query.offset) ? req.query.offset[0] : req.query.offset;
+    const limit = Math.min(parseInt(String(limitRaw || '50'), 10) || 50, 100);
+    
+    // Parse cursor (ISO timestamp string)
+    let cursorDate: Date | null = null;
+    if (cursorRaw) {
+      const parsed = new Date(String(cursorRaw));
+      if (!Number.isNaN(parsed.getTime())) {
+        cursorDate = parsed;
+      }
+    }
+    
+    // Backward compatible: support offset if no cursor provided
+    const offset = cursorDate ? 0 : (parseInt(String(offsetRaw || '0'), 10) || 0);
+
+    // TASK 2.4: Use cursor-based filtering if cursor provided
+    if (cursorDate) {
+      commentWhere.createdAt = {
+        ...commentWhere.createdAt,
+        gt: cursorDate, // Get comments after cursor
+      };
+    }
+
+    // Get total count for pagination metadata (only if offset-based, skip for cursor)
+    const total = offset > 0 ? await prisma.comment.count({ where: commentWhere }) : undefined;
+
+    const comments = await prisma.comment.findMany({
+      where: commentWhere,
+      include: {
+        createdBy: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: limit,
+      ...(cursorDate ? {} : { skip: offset }), // Only use skip if not using cursor
+    });
+
+    // Shape messages similar to socket events, applying anonymity rules
+    const shaped = comments.map((c) => {
+      const isOwn = c.createdById === req.user.id;
+      const maskedToOthers = c.anonymous && !admin && !isOwn;
+      const sender = maskedToOthers ? 'Anonymous' : c.createdBy.name;
+      const actualSender = c.anonymous && admin ? c.createdBy.name : undefined;
+      return {
+        id: c.id,
+        message: c.content,
+        visibility: c.visibility as 'EVERYONE' | 'ADMIN_ONLY',
+        sender,
+        actualSender,
+        createdAt: c.createdAt,
+        userId: c.createdById,
+      };
+    });
+
+    // TASK 2.4: Return cursor-based pagination metadata
+    const lastComment = shaped.length > 0 ? shaped[shaped.length - 1] : null;
+    const nextCursor = lastComment?.createdAt ? new Date(lastComment.createdAt).toISOString() : null;
+    const hasMore = shaped.length === limit; // If we got exactly limit items, there might be more
+
+    // Return backward-compatible response with pagination metadata
+    res.json({
+      comments: shaped,
+      ...(total !== undefined && { total }), // Only include total if offset-based
+      limit,
+      ...(cursorDate ? { cursor: nextCursor, hasMore } : { offset }), // Cursor-based or offset-based
+    });
+  } catch (error) {
+    console.error('❌ Error fetching comments:', error);
+    res.status(500).json({ message: 'Error fetching comments' });
+  }
+};
+
+// TASK 1.3: New endpoint to get comments by boardCode (enables parallel fetch with board details)
+export const getCommentsByCode = async (req: Request, res: Response) => {
+  try {
+    const { boardCode } = req.params;
+
+    // Find board by code first
+    const board = await prisma.board.findUnique({ 
+      where: { code: boardCode }, 
+      select: { id: true, createdBy: true } 
+    });
+    if (!board) {
+      res.status(404).json({ message: 'Board not found' });
+      return;
+    }
+
+    const membership = await getMembership(req.user.id, board.id);
+    if (!membership) {
+      res.status(403).json({ message: 'You are not a member of this board' });
+      return;
+    }
+
+    const isLeft = membership.status === 'LEFT';
+    const leftCutoff = isLeft && membership.leftAt ? membership.leftAt : null;
+    const admin = !isLeft && (board.createdBy === req.user.id || membership.role === 'ADMIN');
+
+    const orClauses: any[] = [
+      { visibility: 'EVERYONE' },
+      { createdById: req.user.id },
+    ];
+    if (admin) {
+      orClauses.push({ visibility: 'ADMIN_ONLY' });
+    }
+
+    const sinceRaw = Array.isArray(req.query.since) ? req.query.since[0] : req.query.since;
+    let sinceDate: Date | null = null;
+    if (sinceRaw) {
+      const parsed = new Date(String(sinceRaw));
+      if (!Number.isNaN(parsed.getTime())) {
+        sinceDate = parsed;
+      }
+    }
+
+    const createdAtFilter: { gt?: Date; lte?: Date } = {};
+    if (sinceDate) {
+      createdAtFilter.gt = sinceDate;
+    }
+    if (leftCutoff) {
+      createdAtFilter.lte = leftCutoff;
+    }
+
+    const commentWhere: any = {
+      boardId: board.id,
+      OR: orClauses,
+    };
+
+    if (Object.keys(createdAtFilter).length > 0) {
+      commentWhere.createdAt = createdAtFilter;
+    }
+
+    // Parse pagination params
     const limitRaw = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
     const offsetRaw = Array.isArray(req.query.offset) ? req.query.offset[0] : req.query.offset;
-    const limit = Math.min(parseInt(String(limitRaw || '100'), 10) || 100, 100);
+    const limit = Math.min(parseInt(String(limitRaw || '50'), 10) || 50, 100);
     const offset = parseInt(String(offsetRaw || '0'), 10) || 0;
 
     // Get total count for pagination metadata
@@ -252,7 +387,7 @@ export const getComments = async (req: Request, res: Response) => {
       offset,
     });
   } catch (error) {
-    console.error('❌ Error fetching comments:', error);
+    console.error('❌ Error fetching comments by code:', error);
     res.status(500).json({ message: 'Error fetching comments' });
   }
 };

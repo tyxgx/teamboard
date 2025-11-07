@@ -9,6 +9,8 @@ import { MessageList, type ChatMessage } from "./components/chat/MessageList";
 import { ChatComposer } from "./components/chat/ChatComposer";
 import { RightPanel } from "./components/chat/RightPanel";
 import { ConfirmModal } from "./components/ui/ConfirmModal";
+// TASK 2.1: Import IndexedDB cache services
+import { boardsCache, boardDetailsCache, mergeCacheData } from "./cache/cacheService";
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL;
 const HIDDEN_STORAGE_KEY = "tb.hiddenBoards";
@@ -173,6 +175,8 @@ export default function BoardRoomPage() {
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [commentsError, setCommentsError] = useState<string | null>(null);
   const [switchingBoard, setSwitchingBoard] = useState<string | null>(null);
+  // TASK 2.4: Track cursor for cursor-based pagination
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
   const [socketConnected, setSocketConnected] = useState(false);
   const [optimisticBoardName, setOptimisticBoardName] = useState<string | null>(null);
@@ -415,8 +419,56 @@ export default function BoardRoomPage() {
       const headers = getAuthHeaders();
       if (!headers) return null;
       
-      // Check cache first for instant display
+      // TASK 2.1: Check IndexedDB cache first for instant display (persists across refreshes)
       if (useCache) {
+        const indexedDBCached = await boardDetailsCache.get(code);
+        if (indexedDBCached) {
+          // Show cached data immediately
+          setBoardDetails(indexedDBCached.details);
+          mergeIncomingMessages(indexedDBCached.details.code, indexedDBCached.comments);
+          
+          // Also update in-memory cache
+          boardCacheRef.current.set(code, {
+            details: indexedDBCached.details,
+            comments: indexedDBCached.comments,
+            timestamp: Date.now(),
+          });
+          
+          // Fetch fresh data in background
+          const fetchFresh = async () => {
+            try {
+              const [boardResponse, commentsData] = await Promise.all([
+                axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers }),
+                axios.get(`${BACKEND}/api/comments/by-code/${code}?limit=50`, { headers })
+              ]);
+              const details = boardResponse.data as BoardDetails;
+              const commentsResponseData = commentsData.data;
+              const comments: ChatMessage[] = Array.isArray(commentsResponseData) ? commentsResponseData : (commentsResponseData.comments || []);
+              const shapedMessages = comments.map((message) => ({
+                ...message,
+                boardCode: details.code,
+              }));
+              
+              // Update both caches
+              boardCacheRef.current.set(code, {
+                details,
+                comments: shapedMessages,
+                timestamp: Date.now(),
+              });
+              await boardDetailsCache.set(code, details, shapedMessages);
+              
+              setBoardDetails(details);
+              mergeIncomingMessages(details.code, shapedMessages);
+              setOptimisticBoardName(null);
+            } catch (error) {
+              // Silently fail background refresh
+            }
+          };
+          void fetchFresh();
+          return indexedDBCached.details;
+        }
+        
+        // Fallback to in-memory cache
         const cached = boardCacheRef.current.get(code);
         if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
           setBoardDetails(cached.details);
@@ -424,9 +476,11 @@ export default function BoardRoomPage() {
           // Still fetch fresh data in background (use a separate function to avoid recursion)
           const fetchFresh = async () => {
             try {
-              const boardResponse = await axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers });
+              const [boardResponse, commentsData] = await Promise.all([
+                axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers }),
+                axios.get(`${BACKEND}/api/comments/by-code/${code}?limit=50`, { headers })
+              ]);
               const details = boardResponse.data as BoardDetails;
-              const commentsData = await axios.get(`${BACKEND}/api/comments/${details.id}?limit=100`, { headers });
               const commentsResponseData = commentsData.data;
               const comments: ChatMessage[] = Array.isArray(commentsResponseData) ? commentsResponseData : (commentsResponseData.comments || []);
               const shapedMessages = comments.map((message) => ({
@@ -438,6 +492,7 @@ export default function BoardRoomPage() {
                 comments: shapedMessages,
                 timestamp: Date.now(),
               });
+              await boardDetailsCache.set(code, details, shapedMessages);
               setBoardDetails(details);
               mergeIncomingMessages(details.code, shapedMessages);
               // Clear optimistic name when fresh data loads
@@ -452,12 +507,12 @@ export default function BoardRoomPage() {
       }
       
       try {
-        // Fetch board details first (we need ID for comments)
-        const boardResponse = await axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers });
+        // TASK 1.3: Fetch board details and comments in parallel using new by-code endpoint
+        const [boardResponse, commentsData] = await Promise.all([
+          axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers }),
+          axios.get(`${BACKEND}/api/comments/by-code/${code}?limit=50`, { headers })
+        ]);
         const details = boardResponse.data as BoardDetails;
-        
-        // Fetch comments immediately after getting board details (can't be truly parallel due to dependency)
-        const commentsData = await axios.get(`${BACKEND}/api/comments/${details.id}?limit=100`, { headers });
         const commentsResponseData = commentsData.data;
         // Handle both old (array) and new (object with comments key) response formats
         const comments: ChatMessage[] = Array.isArray(commentsResponseData) ? commentsResponseData : (commentsResponseData.comments || []);
@@ -466,15 +521,22 @@ export default function BoardRoomPage() {
           boardCode: details.code,
         }));
         
-        // Update cache
+        // TASK 2.1: Update both in-memory and IndexedDB caches
         boardCacheRef.current.set(code, {
           details,
           comments: shapedMessages,
           timestamp: Date.now(),
         });
+        await boardDetailsCache.set(code, details, shapedMessages);
         
         setBoardDetails(details);
         mergeIncomingMessages(details.code, shapedMessages);
+        // TASK 2.4: Update cursor from response
+        if (commentsResponseData.cursor) {
+          setNextCursor(commentsResponseData.cursor);
+        } else {
+          setNextCursor(null);
+        }
         // Clear optimistic name when real data loads (no flicker if names match)
         if (optimisticBoardName === details.name) {
           setOptimisticBoardName(null);
@@ -509,11 +571,15 @@ export default function BoardRoomPage() {
   );
 
   const loadComments = useCallback(
-    async (boardId: string, code: string) => {
+    async (boardId: string, code: string, cursor?: string | null) => {
       const headers = getAuthHeaders();
       if (!headers) return;
       try {
-        const response = await axios.get(`${BACKEND}/api/comments/${boardId}`, { headers });
+        // TASK 2.4: Use cursor-based pagination if cursor provided
+        const url = cursor 
+          ? `${BACKEND}/api/comments/${boardId}?limit=50&cursor=${encodeURIComponent(cursor)}`
+          : `${BACKEND}/api/comments/${boardId}?limit=50`;
+        const response = await axios.get(url, { headers });
         const responseData = response.data;
         // Handle both old (array) and new (object with comments key) response formats
         const history: ChatMessage[] = Array.isArray(responseData) ? responseData : (responseData.comments || []);
@@ -521,6 +587,13 @@ export default function BoardRoomPage() {
           code,
           history.map((message) => ({ ...message, boardCode: code }))
         );
+        
+        // TASK 2.4: Update cursor for next pagination
+        if (responseData.cursor) {
+          setNextCursor(responseData.cursor);
+        } else {
+          setNextCursor(null);
+        }
       } catch (error: any) {
         if (error?.response?.status === 401) {
           handleAuthFailure();
@@ -542,6 +615,16 @@ export default function BoardRoomPage() {
 
     const bootstrap = async () => {
       try {
+        // TASK 2.1: Try to get userId from token first (if we can decode it) or use a temp key
+        // We'll use a temporary approach: try to read from any cached userId, or wait for auth
+        let cachedBoards: BoardSummary[] | null = null;
+        try {
+          // Try to get cached boards from any userId (we'll refine this after auth)
+          // For now, we'll check cache after we get the userId
+        } catch (error) {
+          // Ignore cache read errors
+        }
+
         // Parallelize user + boards fetching for faster load
         const [authResponse, boardsResponse] = await Promise.all([
           axios.get(`${BACKEND}/api/test-auth`, { headers }),
@@ -551,22 +634,38 @@ export default function BoardRoomPage() {
         if (cancelled) return;
         
         // Update state in parallel
-        setUser(authResponse.data.user as User);
+        const userData = authResponse.data.user as User;
+        setUser(userData);
+        
+        // TASK 2.1: Now that we have userId, try to read from IndexedDB cache
+        cachedBoards = await boardsCache.get(userData.id);
+        if (cachedBoards && !cancelled) {
+          // Show cached boards immediately
+          setBoards(cachedBoards);
+        }
+        
         const summaries: BoardSummary[] = boardsResponse.data;
         const sorted = sortBoardSummaries(summaries);
         
-        // Update cache
+        // TASK 2.1: For boards, use fresh data (boards can be added/deleted, so merging doesn't make sense)
+        // Cached boards are only shown for instant display, then replaced with fresh data
+        const finalBoards = sorted;
+        
+        // Update in-memory cache
         boardListCacheRef.current = {
-          boards: sorted,
+          boards: finalBoards,
           timestamp: Date.now(),
         };
         
-        setBoards(sorted);
+        // TASK 2.1: Write to IndexedDB cache
+        await boardsCache.set(userData.id, finalBoards);
+        
+        setBoards(finalBoards);
         setHiddenBoardIds((prev) => prev.filter((id) => summaries.some((board) => board.id === id)));
         
         // PROMPT 2/7: Start preloading all boards in background (non-blocking)
         if (!cancelled) {
-          void preloadAllBoards(sorted, headers);
+          void preloadAllBoards(finalBoards, headers);
         }
       } catch (error: any) {
         if (!cancelled) {
@@ -612,9 +711,12 @@ export default function BoardRoomPage() {
             if (cached && Date.now() - cached.timestamp < CACHE_TTL) return;
             
             try {
-              const boardResponse = await axios.get(`${BACKEND}/api/boards/by-code/${board.code}`, { headers });
+              // TASK 1.3: Use parallel fetch for preloading too
+              const [boardResponse, commentsData] = await Promise.all([
+                axios.get(`${BACKEND}/api/boards/by-code/${board.code}`, { headers }),
+                axios.get(`${BACKEND}/api/comments/by-code/${board.code}?limit=50`, { headers })
+              ]);
               const details = boardResponse.data as BoardDetails;
-              const commentsData = await axios.get(`${BACKEND}/api/comments/${details.id}?limit=100`, { headers });
               const commentsResponseData = commentsData.data;
               const comments: ChatMessage[] = Array.isArray(commentsResponseData) ? commentsResponseData : (commentsResponseData.comments || []);
               const shapedMessages = comments.map((message) => ({
@@ -622,11 +724,13 @@ export default function BoardRoomPage() {
                 boardCode: details.code,
               }));
               
+              // TASK 2.1: Update both in-memory and IndexedDB caches
               boardCacheRef.current.set(board.code, {
                 details,
                 comments: shapedMessages,
                 timestamp: Date.now(),
               });
+              await boardDetailsCache.set(board.code, details, shapedMessages);
             } catch (error) {
               // Silently fail - preloading shouldn't show errors
             }
@@ -653,10 +757,17 @@ export default function BoardRoomPage() {
       setComposerValue("");
       setAnonymousMode(false);
       setVisibility("EVERYONE");
+      setNextCursor(null); // TASK 2.4: Clear cursor when switching boards
       pendingMessagesRef.current.clear();
       activeRoomRef.current = null;
       realtimeService.clearRoom();
       return;
+    }
+
+    // TASK 1.1: Join socket room immediately when boardCode is available, before loading board details
+    if (user?.name) {
+      realtimeService.joinIfNeeded(boardCode, user.name);
+      activeRoomRef.current = realtimeService.getCurrentRoom();
     }
 
     setSidebarOpen(false);
@@ -668,8 +779,7 @@ export default function BoardRoomPage() {
     setAnonymousMode(false);
     setVisibility("EVERYONE");
     pendingMessagesRef.current.clear();
-    activeRoomRef.current = null;
-    realtimeService.clearRoom();
+    // Don't clear activeRoomRef or realtimeService here since we just joined above
 
     let cancelled = false;
 
@@ -706,13 +816,18 @@ export default function BoardRoomPage() {
     return () => {
       cancelled = true;
     };
-  }, [boardCode, handleAuthFailure, loadBoardDetails, navigate]);
+  }, [boardCode, user?.name, handleAuthFailure, loadBoardDetails, navigate]);
 
+  // TASK 1.1: Socket join now happens immediately in boardCode effect above
+  // This effect is kept as a fallback for when user loads after boardCode is already set
   useEffect(() => {
     const code = boardCode ?? null;
     if (!code || !user?.name) return;
-    realtimeService.joinIfNeeded(code, user.name);
-    activeRoomRef.current = realtimeService.getCurrentRoom();
+    // Only join if not already joined (avoid duplicate joins)
+    if (realtimeService.getCurrentRoom() !== code) {
+      realtimeService.joinIfNeeded(code, user.name);
+      activeRoomRef.current = realtimeService.getCurrentRoom();
+    }
   }, [boardCode, user?.name]);
 
   useEffect(() => {
@@ -739,9 +854,12 @@ export default function BoardRoomPage() {
       return;
     }
     if (!user?.name) return;
-    if (activeRoomRef.current === code) return;
-    realtimeService.joinIfNeeded(code, user.name);
-    activeRoomRef.current = realtimeService.getCurrentRoom();
+    // TASK 1.1: Socket join now happens immediately in boardCode effect
+    // Only join here if not already joined (socket join happens earlier)
+    if (realtimeService.getCurrentRoom() !== code) {
+      realtimeService.joinIfNeeded(code, user.name);
+      activeRoomRef.current = realtimeService.getCurrentRoom();
+    }
   }, [boardDetails?.code, boardDetails?.readOnly, user?.name]);
 
   useEffect(() => {
@@ -1110,11 +1228,22 @@ export default function BoardRoomPage() {
     setCommentsError(null);
     setLoadingOlderMessages(true);
     try {
-      await loadComments(boardDetails.id, boardDetails.code);
+      // TASK 2.4: For loading older messages, use offset-based pagination (backward compatible)
+      // Get current message count to calculate offset
+      const currentCount = messages.length;
+      const url = `${BACKEND}/api/comments/${boardDetails.id}?limit=50&offset=${currentCount}`;
+      const headers = getAuthHeaders();
+      if (!headers) return;
+      const response = await axios.get(url, { headers });
+      const responseData = response.data;
+      const history: ChatMessage[] = Array.isArray(responseData) ? responseData : (responseData.comments || []);
+      // Prepend older messages to the beginning
+      const olderMessages = history.map((message) => ({ ...message, boardCode: boardDetails.code }));
+      setMessages((prev) => [...olderMessages, ...prev]);
     } finally {
       setLoadingOlderMessages(false);
     }
-  }, [boardDetails, loadComments, loadingOlderMessages]);
+  }, [boardDetails, loadComments, loadingOlderMessages, messages.length, getAuthHeaders]);
 
   const handleCreateBoard = useCallback(async () => {
     const name = createBoardName.trim();
@@ -1258,7 +1387,8 @@ export default function BoardRoomPage() {
       try {
         const boardResponse = await axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers });
         const details = boardResponse.data as BoardDetails;
-        const commentsData = await axios.get(`${BACKEND}/api/comments/${details.id}?limit=100`, { headers });
+        // TASK 1.2: Reduced limit from 100 to 50 for faster first load
+        const commentsData = await axios.get(`${BACKEND}/api/comments/${details.id}?limit=50`, { headers });
         const commentsResponseData = commentsData.data;
         const comments: ChatMessage[] = Array.isArray(commentsResponseData) ? commentsResponseData : (commentsResponseData.comments || []);
         const shapedMessages = comments.map((message) => ({

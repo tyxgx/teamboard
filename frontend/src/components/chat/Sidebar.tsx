@@ -84,12 +84,52 @@ export const Sidebar = React.memo(({
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [accountMenu, setAccountMenu] = useState(false);
   const prefetchTimeoutRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // TASK 3.5: Intersection Observer for intelligent prefetching
+  const boardRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const filteredBoards = useMemo(() => {
     const trimmed = query.trim().toLowerCase();
     if (!trimmed) return boards;
     return boards.filter((board) => board.name.toLowerCase().includes(trimmed));
   }, [boards, query]);
+
+  // TASK 3.5: Intersection Observer for prefetching boards near viewport
+  useEffect(() => {
+    if (!onPrefetchBoard) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting && entry.target instanceof HTMLElement) {
+            const boardCode = entry.target.dataset.boardCode;
+            if (boardCode && !prefetchTimeoutRef.current[boardCode]) {
+              // Prefetch when board is visible in viewport (with small delay)
+              prefetchTimeoutRef.current[boardCode] = setTimeout(() => {
+                onPrefetchBoard(boardCode);
+                delete prefetchTimeoutRef.current[boardCode];
+              }, 300);
+            }
+          }
+        });
+      },
+      {
+        rootMargin: '100px', // Start prefetching 100px before board enters viewport
+        threshold: 0.1,
+      }
+    );
+
+    // Observe all board elements
+    Object.values(boardRefs.current).forEach((ref) => {
+      if (ref) observer.observe(ref);
+    });
+
+    return () => {
+      observer.disconnect();
+      // Clear any pending prefetches
+      Object.values(prefetchTimeoutRef.current).forEach((timeout) => clearTimeout(timeout));
+      prefetchTimeoutRef.current = {};
+    };
+  }, [filteredBoards, onPrefetchBoard]);
 
   const closeMenus = () => {
     setMenuOpen(null);
@@ -206,8 +246,13 @@ export const Sidebar = React.memo(({
                       }
                       onSelectBoard(board.code);
                     }}
+                    ref={(el) => {
+                      // TASK 3.5: Store ref for Intersection Observer
+                      boardRefs.current[board.code] = el;
+                    }}
+                    data-board-code={board.code}
                     onMouseEnter={() => {
-                      // Prefetch on hover with delay to avoid accidental prefetches
+                      // TASK 3.5: Prefetch on hover with delay (fallback if Intersection Observer hasn't triggered)
                       if (!isActive && onPrefetchBoard && !prefetchTimeoutRef.current[board.code]) {
                         prefetchTimeoutRef.current[board.code] = setTimeout(() => {
                           onPrefetchBoard(board.code);

@@ -1,5 +1,5 @@
 import express from 'express';
-import { createComment, getComments } from '../controllers/comment.controller';
+import { createComment, getComments, getCommentsByCode } from '../controllers/comment.controller';
 import { authenticate } from '../middlewares/auth.middleware';
 import { validate } from '../middlewares/validate';
 import { commentSchema } from '../validators/comment.schema';
@@ -63,6 +63,8 @@ router.post('/', authenticate, validate(commentSchema), createComment);
  *       401:
  *         description: Unauthorized
  */
+// TASK 1.3: New route for getting comments by boardCode (enables parallel fetch)
+router.get('/by-code/:boardCode', authenticate, getCommentsByCode);
 router.get('/:boardId', authenticate, getComments);
 
 export default router;

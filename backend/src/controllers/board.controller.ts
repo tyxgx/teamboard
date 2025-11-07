@@ -129,8 +129,20 @@ export const createBoard = async (req: Request, res: Response): Promise<void> =>
 };
 
 // ✅ Get boards where user is a member (with pinned + lastActivity)
+// TASK 2.3: Add pagination support
 export const getBoards = async (req: Request, res: Response): Promise<void> => {
   try {
+    // Parse pagination params
+    const limitRaw = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+    const offsetRaw = Array.isArray(req.query.offset) ? req.query.offset[0] : req.query.offset;
+    const limit = Math.min(parseInt(String(limitRaw || '100'), 10) || 100, 200); // Max 200
+    const offset = parseInt(String(offsetRaw || '0'), 10) || 0;
+
+    // Get total count for pagination metadata
+    const total = await prisma.boardMembership.count({
+      where: { userId: req.user.id },
+    });
+
     const memberships = await prisma.boardMembership.findMany({
       where: { userId: req.user.id },
       select: {
@@ -139,6 +151,8 @@ export const getBoards = async (req: Request, res: Response): Promise<void> => {
         status: true,
         board: { select: boardSummarySelect },
       },
+      take: limit,
+      skip: offset,
     });
 
     const summaries = memberships.map((membership) =>
@@ -165,7 +179,19 @@ export const getBoards = async (req: Request, res: Response): Promise<void> => {
       return a.name.localeCompare(b.name);
     });
 
-    res.status(200).json(result);
+    // TASK 2.3: Return pagination metadata if pagination params were provided
+    if (limitRaw || offsetRaw) {
+      res.status(200).json({
+        boards: result,
+        total,
+        limit,
+        offset,
+        hasMore: offset + limit < total,
+      });
+    } else {
+      // Backward compatible: return array if no pagination params
+      res.status(200).json(result);
+    }
   } catch (error) {
     console.error('❌ Error fetching boards:', error);
     res.status(500).json({ message: 'Error fetching boards' });
@@ -180,6 +206,7 @@ export const getBoardById = async (req: Request, res: Response): Promise<void> =
     const membership = await getBoardMembership(req.user.id, id);
     ensureMembershipExists(membership);
 
+    // TASK 3.4: Optimize query - filter active members at database level
     const board = await prisma.board.findUnique({
       where: { id },
       select: {
@@ -190,6 +217,7 @@ export const getBoardById = async (req: Request, res: Response): Promise<void> =
         lastActivity: true,
         createdBy: true,
         members: {
+          where: { status: 'ACTIVE' }, // TASK 3.4: Filter at DB level
           select: {
             id: true,
             userId: true,
@@ -206,7 +234,7 @@ export const getBoardById = async (req: Request, res: Response): Promise<void> =
 
     ensureBoardExists(board);
 
-    const activeMembers = board.members.filter((member) => member.status === 'ACTIVE');
+    const activeMembers = board.members; // Already filtered
 
     res.status(200).json({
       id: board.id,
@@ -317,6 +345,7 @@ export const getBoardByCode = async (req: Request, res: Response): Promise<void>
   try {
     const { code } = req.params;
 
+    // TASK 3.4: Optimize query - filter active members at database level
     const board = await prisma.board.findUnique({
       where: { code },
       select: {
@@ -327,6 +356,7 @@ export const getBoardByCode = async (req: Request, res: Response): Promise<void>
         lastActivity: true,
         createdBy: true,
         members: {
+          where: { status: 'ACTIVE' }, // TASK 3.4: Filter at DB level
           select: {
             id: true,
             userId: true,
@@ -343,10 +373,11 @@ export const getBoardByCode = async (req: Request, res: Response): Promise<void>
 
     ensureBoardExists(board);
 
-    const membership = board.members.find((member) => member.userId === req.user.id);
+    // TASK 3.4: Find membership separately if needed (for status check)
+    const membership = await getBoardMembership(req.user.id, board.id);
     ensureMembershipExists(membership);
 
-    const activeMembers = board.members.filter((member) => member.status === 'ACTIVE');
+    const activeMembers = board.members; // Already filtered
 
     res.status(200).json({
       id: board.id,

@@ -36,9 +36,27 @@ app.get('/', (req: Request, res: Response) => {
   res.send('TeamBoard API is running');
 });
 
-// ✅ Light caching for board list endpoint
+// TASK 3.3: Enhanced HTTP caching for various endpoints
+// Board list - short cache (15s) since it changes frequently
 app.get('/api/boards', (req: Request, res: Response, next: NextFunction) => {
-  res.set('Cache-Control', 'private, max-age=15');
+  res.set('Cache-Control', 'private, max-age=15, stale-while-revalidate=30');
+  next();
+});
+
+// Board details - medium cache (30s) with stale-while-revalidate
+app.get('/api/boards/by-code/:code', (req: Request, res: Response, next: NextFunction) => {
+  res.set('Cache-Control', 'private, max-age=30, stale-while-revalidate=60');
+  next();
+});
+
+// Comments - short cache (10s) since they update frequently
+app.get('/api/comments/:boardId', (req: Request, res: Response, next: NextFunction) => {
+  res.set('Cache-Control', 'private, max-age=10, stale-while-revalidate=20');
+  next();
+});
+
+app.get('/api/comments/by-code/:boardCode', (req: Request, res: Response, next: NextFunction) => {
+  res.set('Cache-Control', 'private, max-age=10, stale-while-revalidate=20');
   next();
 });
 
