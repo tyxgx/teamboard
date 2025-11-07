@@ -29,12 +29,17 @@ export function setupSocket(server: http.Server) {
   const io = getIO();
 
   io.on("connection", (socket) => {
-    console.log("🔌 New client connected:", socket.id);
+    const isDev = process.env.NODE_ENV !== "production";
+    if (isDev) {
+      console.log("🔌 New client connected:", socket.id);
+    }
 
     socket.on("join-board", ({ boardCode, name }) => {
       socket.join(boardCode);
       userMap.set(socket.id, { name, boardCode });
-      console.log(`📥 ${name} joined board: ${boardCode}`);
+      if (isDev) {
+        console.log(`📥 ${name} joined board: ${boardCode}`);
+      }
       socket.to(boardCode).emit("user-joined", { name });
       socket.emit("joined-room", { boardCode });
     });
@@ -46,7 +51,9 @@ export function setupSocket(server: http.Server) {
     socket.on("disconnect", () => {
       const user = userMap.get(socket.id);
       if (user) {
-        console.log(`❌ ${user.name} disconnected from board: ${user.boardCode}`);
+        if (isDev) {
+          console.log(`❌ ${user.name} disconnected from board: ${user.boardCode}`);
+        }
         socket.to(user.boardCode).emit("user-left", { name: user.name });
         userMap.delete(socket.id);
       }

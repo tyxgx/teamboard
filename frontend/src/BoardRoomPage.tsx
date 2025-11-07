@@ -88,6 +88,15 @@ const sortBoardSummaries = (boards: BoardSummary[]) => {
   });
 };
 
+// Debounce helper
+const debounce = <T extends (...args: any[]) => void>(fn: T, delay: number) => {
+  let timeoutId: ReturnType<typeof setTimeout>;
+  return (...args: Parameters<T>) => {
+    clearTimeout(timeoutId);
+    timeoutId = setTimeout(() => fn(...args), delay);
+  };
+};
+
 const normalizeMessage = (message: ChatMessage) => {
   const createdAtValue = message.createdAt
     ? new Date(message.createdAt).toISOString()
@@ -175,6 +184,12 @@ export default function BoardRoomPage() {
   const activeRoomRef = useRef<string | null>(null);
   const lastReceivedRef = useRef<Record<string, string>>({});
   const lastDeltaRunRef = useRef<Record<string, number>>({});
+
+  const handleAuthFailure = useCallback(() => {
+    localStorage.removeItem("token");
+    setUser(null);
+    navigate("/", { replace: true });
+  }, [navigate]);
 
   const activeBoardCode = boardDetails?.code ?? null;
   const readOnly = boardDetails?.readOnly ?? false;
@@ -282,12 +297,19 @@ export default function BoardRoomPage() {
           `${BACKEND}/api/comments/${boardId}?since=${encodeURIComponent(sinceISO)}`,
           { headers }
         );
-        const incoming = (response.data as ChatMessage[]).map((message) => ({
+        const responseData = response.data;
+        // Handle both old (array) and new (object with comments key) response formats
+        const comments: ChatMessage[] = Array.isArray(responseData) ? responseData : (responseData.comments || []);
+        const incoming = comments.map((message) => ({
           ...message,
           boardCode: code,
         }));
         mergeIncomingMessages(code, incoming);
-      } catch (error) {
+      } catch (error: any) {
+        if (error?.response?.status === 401) {
+          handleAuthFailure();
+          return;
+        }
         if (import.meta.env.DEV) {
           console.warn("[rt] delta fetch failed", error);
         }
@@ -298,7 +320,7 @@ export default function BoardRoomPage() {
         }
       }
     },
-    [getAuthHeaders, mergeIncomingMessages, updateLastReceived]
+    [getAuthHeaders, handleAuthFailure, mergeIncomingMessages, updateLastReceived]
   );
 
   const loadBoards = useCallback(async () => {
@@ -310,51 +332,77 @@ export default function BoardRoomPage() {
     setHiddenBoardIds((prev) => prev.filter((id) => summaries.some((board) => board.id === id)));
   }, [getAuthHeaders, setHiddenBoardIds]);
 
+  // Debounced version for non-initial calls
+  const debouncedLoadBoards = useMemo(() => debounce(loadBoards, 300), [loadBoards]);
+
   const loadBoardDetails = useCallback(
     async (code: string) => {
       const headers = getAuthHeaders();
       if (!headers) return null;
-      const response = await axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers });
-      const { comments = [], ...details } = response.data as BoardDetails & { comments?: ChatMessage[] };
-      const shapedMessages = comments.map((message) => ({
-        ...message,
-        boardCode: details.code,
-      }));
-      setBoardDetails(details);
-      mergeIncomingMessages(details.code, shapedMessages);
-      pendingMessagesRef.current.clear();
-      if (details.readOnly && activeRoomRef.current === details.code) {
-        activeRoomRef.current = null;
+      try {
+        const response = await axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers });
+        const details = response.data as BoardDetails;
+        
+        // Fetch comments separately with pagination
+        const commentsResponse = await axios.get(`${BACKEND}/api/comments/${details.id}?limit=100`, { headers });
+        const commentsData = commentsResponse.data;
+        // Handle both old (array) and new (object with comments key) response formats
+        const comments: ChatMessage[] = Array.isArray(commentsData) ? commentsData : (commentsData.comments || []);
+        const shapedMessages = comments.map((message) => ({
+          ...message,
+          boardCode: details.code,
+        }));
+        
+        setBoardDetails(details);
+        mergeIncomingMessages(details.code, shapedMessages);
+        pendingMessagesRef.current.clear();
+        if (details.readOnly && activeRoomRef.current === details.code) {
+          activeRoomRef.current = null;
+        }
+        updateBoardSummary(code, {
+          anonymousEnabled: details.anonymousEnabled,
+          lastActivity: details.lastActivity ?? null,
+          membershipStatus: details.membershipStatus,
+          readOnly: details.readOnly,
+          memberCount: details.members.length,
+          role: details.membershipRole,
+          isCreator: details.isCreator,
+        });
+        localStorage.setItem(LAST_BOARD_KEY, code);
+        resetUnread(code);
+        setCommentsError(null);
+        return details;
+      } catch (error: any) {
+        if (error?.response?.status === 401) {
+          handleAuthFailure();
+        }
+        throw error;
       }
-      updateBoardSummary(code, {
-        anonymousEnabled: details.anonymousEnabled,
-        lastActivity: details.lastActivity ?? null,
-        membershipStatus: details.membershipStatus,
-        readOnly: details.readOnly,
-        memberCount: details.members.length,
-        role: details.membershipRole,
-        isCreator: details.isCreator,
-      });
-      localStorage.setItem(LAST_BOARD_KEY, code);
-      resetUnread(code);
-      setCommentsError(null);
-      return details;
     },
-    [getAuthHeaders, mergeIncomingMessages, resetUnread, updateBoardSummary]
+    [getAuthHeaders, handleAuthFailure, mergeIncomingMessages, resetUnread, updateBoardSummary]
   );
 
   const loadComments = useCallback(
     async (boardId: string, code: string) => {
       const headers = getAuthHeaders();
       if (!headers) return;
-      const response = await axios.get(`${BACKEND}/api/comments/${boardId}`, { headers });
-      const history: ChatMessage[] = response.data;
-      mergeIncomingMessages(
-        code,
-        history.map((message) => ({ ...message, boardCode: code }))
-      );
+      try {
+        const response = await axios.get(`${BACKEND}/api/comments/${boardId}`, { headers });
+        const responseData = response.data;
+        // Handle both old (array) and new (object with comments key) response formats
+        const history: ChatMessage[] = Array.isArray(responseData) ? responseData : (responseData.comments || []);
+        mergeIncomingMessages(
+          code,
+          history.map((message) => ({ ...message, boardCode: code }))
+        );
+      } catch (error: any) {
+        if (error?.response?.status === 401) {
+          handleAuthFailure();
+        }
+        throw error;
+      }
     },
-    [getAuthHeaders, mergeIncomingMessages]
+    [getAuthHeaders, handleAuthFailure, mergeIncomingMessages]
   );
 
   useEffect(() => {
@@ -372,10 +420,14 @@ export default function BoardRoomPage() {
         if (cancelled) return;
         setUser(authResponse.data.user as User);
         await loadBoards();
-      } catch (error) {
+      } catch (error: any) {
         if (!cancelled) {
           console.error("Failed to bootstrap user", error);
-          setUser(null);
+          if (error?.response?.status === 401) {
+            handleAuthFailure();
+          } else {
+            setUser(null);
+          }
         }
       }
     };
@@ -385,7 +437,7 @@ export default function BoardRoomPage() {
     return () => {
       cancelled = true;
     };
-  }, [getAuthHeaders, loadBoards]);
+  }, [getAuthHeaders, handleAuthFailure, loadBoards]);
 
   useEffect(() => {
     if (!boardCode) {
@@ -423,6 +475,10 @@ export default function BoardRoomPage() {
         const details = await loadBoardDetails(boardCode);
         if (!details || cancelled) return;
       } catch (error: any) {
+        if (error?.response?.status === 401) {
+          handleAuthFailure();
+          return;
+        }
         console.error("Unable to fetch board details", error);
         if (error?.response?.status === 404 || error?.response?.status === 403) {
           activeRoomRef.current = null;
@@ -445,7 +501,7 @@ export default function BoardRoomPage() {
     return () => {
       cancelled = true;
     };
-  }, [boardCode, loadBoardDetails, navigate]);
+  }, [boardCode, handleAuthFailure, loadBoardDetails, navigate]);
 
   useEffect(() => {
     const code = boardCode ?? null;
@@ -513,16 +569,16 @@ export default function BoardRoomPage() {
       const lastISO = lastReceivedRef.current[code];
       if (lastISO) {
         const lastTime = new Date(lastISO).getTime();
-        if (!Number.isNaN(lastTime) && Date.now() - lastTime < 6000) {
+        if (!Number.isNaN(lastTime) && Date.now() - lastTime < 12000) {
           return;
         }
       }
       const lastDelta = lastDeltaRunRef.current[code] ?? 0;
-      if (Date.now() - lastDelta < 2000) {
+      if (Date.now() - lastDelta < 3000) {
         return;
       }
       void fetchDeltaForBoard(code, boardDetails.id);
-    }, 2000);
+    }, 3000);
 
     return () => {
       cancelled = true;
@@ -660,9 +716,8 @@ export default function BoardRoomPage() {
           if (boardDetails?.code === code) {
             setBoardDetails((prev) => (prev ? { ...prev, membershipStatus: "ACTIVE", readOnly: false } : prev));
           }
-        } else if (boardDetails?.code === code) {
-          void loadBoardDetails(code);
         }
+        // Removed redundant loadBoardDetails call - optimistic updates handle UI
         return;
       }
 
@@ -681,9 +736,8 @@ export default function BoardRoomPage() {
             setMessages((prev) => prev);
             navigate("/app");
           }
-        } else if (boardDetails?.code === code) {
-          void loadBoardDetails(code);
         }
+        // Removed redundant loadBoardDetails call - optimistic updates handle UI
       }
     };
 
@@ -753,10 +807,14 @@ export default function BoardRoomPage() {
         },
         headers
       );
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.response?.status === 401) {
+        handleAuthFailure();
+        return;
+      }
       console.error("Failed to send message", error);
     }
-  }, [anonymousMode, boardDetails, composerValue, getAuthHeaders, isAdmin, updateBoardSummary, updateLastReceived, user, visibility]);
+  }, [anonymousMode, boardDetails, composerValue, getAuthHeaders, handleAuthFailure, isAdmin, updateBoardSummary, updateLastReceived, user, visibility]);
 
   const handleToggleAnonymous = useCallback(
     async (enabled: boolean) => {
@@ -772,11 +830,15 @@ export default function BoardRoomPage() {
         setBoardDetails((prev) => (prev ? { ...prev, anonymousEnabled: enabled } : prev));
         updateBoardSummary(boardDetails.code, { anonymousEnabled: enabled });
         if (!enabled) setAnonymousMode(false);
-      } catch (error) {
+      } catch (error: any) {
+        if (error?.response?.status === 401) {
+          handleAuthFailure();
+          return;
+        }
         console.error("Failed to toggle anonymous mode", error);
       }
     },
-    [boardDetails, getAuthHeaders, updateBoardSummary]
+    [boardDetails, getAuthHeaders, handleAuthFailure, updateBoardSummary]
   );
 
   const handleRetryComments = useCallback(async () => {
@@ -784,11 +846,15 @@ export default function BoardRoomPage() {
     try {
       await loadComments(boardDetails.id, boardDetails.code);
       setCommentsError(null);
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.response?.status === 401) {
+        handleAuthFailure();
+        return;
+      }
       console.error("Retry failed", error);
       setCommentsError("Unable to load messages. Try again.");
     }
-  }, [boardDetails, loadComments]);
+  }, [boardDetails, handleAuthFailure, loadComments]);
 
   const handleLoadOlder = useCallback(() => {
     if (!boardDetails?.id) return;
@@ -811,10 +877,14 @@ export default function BoardRoomPage() {
       setCreateBoardName("");
       await loadBoards();
       navigate(`/board/${response.data.code}`);
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.response?.status === 401) {
+        handleAuthFailure();
+        return;
+      }
       console.error("Unable to create board", error);
     }
-  }, [createBoardName, getAuthHeaders, loadBoards, navigate]);
+  }, [createBoardName, getAuthHeaders, handleAuthFailure, loadBoards, navigate]);
 
   const handleJoinBoard = useCallback(async () => {
     const code = joinCodeValue.trim();
@@ -829,13 +899,17 @@ export default function BoardRoomPage() {
       );
       setJoinDialogOpen(false);
       setJoinCodeValue("");
-      await loadBoards();
+      debouncedLoadBoards();
       const target = response.data?.board?.code ?? response.data?.code ?? code;
       navigate(`/board/${target}`);
-    } catch (error) {
+    } catch (error: any) {
+      if (error?.response?.status === 401) {
+        handleAuthFailure();
+        return;
+      }
       console.error("Unable to join board", error);
     }
-  }, [getAuthHeaders, joinCodeValue, loadBoards, navigate]);
+  }, [getAuthHeaders, handleAuthFailure, joinCodeValue, debouncedLoadBoards, navigate]);
 
   const handleLeaveBoard = useCallback(async () => {
     if (!modal || modal.type !== "leave") return;
@@ -856,13 +930,17 @@ export default function BoardRoomPage() {
         );
         navigate("/app");
       }
-      await loadBoards();
-    } catch (error) {
+      debouncedLoadBoards();
+    } catch (error: any) {
+      if (error?.response?.status === 401) {
+        handleAuthFailure();
+        return;
+      }
       console.error("Failed to leave board", error);
     } finally {
       setModal(null);
     }
-  }, [boardDetails, getAuthHeaders, loadBoards, modal, navigate, updateBoardSummary]);
+  }, [boardDetails, getAuthHeaders, handleAuthFailure, debouncedLoadBoards, modal, navigate, updateBoardSummary]);
 
   const handleHideBoard = useCallback(
     (board: { id: string; code: string; name: string }) => {

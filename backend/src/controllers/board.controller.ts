@@ -16,7 +16,7 @@ const boardSummarySelect = {
   lastCommentVisibility: true,
   lastCommentAnonymous: true,
   lastCommentSenderId: true,
-  lastCommentSender: { select: { name: true } },
+  lastCommentSenderName: true,
   _count: { select: { members: true } },
 } as const;
 
@@ -33,6 +33,7 @@ function buildBoardSummary(
     lastCommentVisibility: Visibility | null;
     lastCommentAnonymous: boolean;
     lastCommentSenderId: string | null;
+    lastCommentSenderName: string | null;
     _count: { members: number };
   },
   membership: { role: string; pinned: boolean; status: MembershipStatus } | null,
@@ -149,7 +150,7 @@ export const getBoards = async (req: Request, res: Response): Promise<void> => {
           status: membership.status,
         },
         req.user.id,
-        membership.board.lastCommentSender?.name ?? null
+        membership.board.lastCommentSenderName ?? null
       )
     );
 
@@ -205,43 +206,6 @@ export const getBoardById = async (req: Request, res: Response): Promise<void> =
 
     ensureBoardExists(board);
 
-    const isLeft = membership.status === 'LEFT';
-    const leftCutoff = isLeft && membership.leftAt ? membership.leftAt : null;
-    const admin = !isLeft && isAdmin(req.user.id, board, membership);
-    const orClauses: any[] = [
-      { visibility: 'EVERYONE' },
-      { createdById: req.user.id },
-    ];
-    if (admin) {
-      orClauses.push({ visibility: 'ADMIN_ONLY' });
-    }
-
-    const commentWhere: any = { boardId: id, OR: orClauses };
-    if (leftCutoff) {
-      commentWhere.createdAt = { lte: leftCutoff };
-    }
-
-    const comments = await prisma.comment.findMany({
-      where: commentWhere,
-      include: {
-        createdBy: { select: { id: true, name: true, email: true } },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    const shapedComments = comments.map((comment) => {
-      const isOwn = comment.createdById === req.user.id;
-      const maskedToOthers = comment.anonymous && !admin && !isOwn;
-      return {
-        id: comment.id,
-        message: comment.content,
-        visibility: comment.visibility,
-        sender: maskedToOthers ? 'Anonymous' : comment.createdBy.name,
-        actualSender: comment.anonymous && admin ? comment.createdBy.name : undefined,
-        createdAt: comment.createdAt,
-      };
-    });
-
     const activeMembers = board.members.filter((member) => member.status === 'ACTIVE');
 
     res.status(200).json({
@@ -251,10 +215,9 @@ export const getBoardById = async (req: Request, res: Response): Promise<void> =
       anonymousEnabled: board.anonymousEnabled,
       lastActivity: board.lastActivity,
       members: activeMembers,
-      comments: shapedComments,
       membershipRole: membership.role,
       membershipStatus: membership.status,
-      readOnly: isLeft,
+      readOnly: membership.status === 'LEFT',
       isCreator: board.createdBy === req.user.id,
     });
   } catch (error: any) {
@@ -340,7 +303,7 @@ export const joinBoard = async (req: Request, res: Response): Promise<void> => {
           status: membership.status,
         },
         userId,
-        membership.board.lastCommentSender?.name ?? null
+        membership.board.lastCommentSenderName ?? null
       )
     );
   } catch (error) {
@@ -383,45 +346,6 @@ export const getBoardByCode = async (req: Request, res: Response): Promise<void>
     const membership = board.members.find((member) => member.userId === req.user.id);
     ensureMembershipExists(membership);
 
-    const isLeft = membership.status === 'LEFT';
-    const leftCutoff = isLeft && membership.leftAt ? membership.leftAt : null;
-    const admin = !isLeft && isAdmin(req.user.id, board, membership);
-    const orClauses: any[] = [
-      { visibility: 'EVERYONE' },
-      { createdById: req.user.id },
-    ];
-    if (admin) {
-      orClauses.push({ visibility: 'ADMIN_ONLY' });
-    }
-
-    const commentWhere: any = { boardId: board.id, OR: orClauses };
-    if (leftCutoff) {
-      commentWhere.createdAt = { lte: leftCutoff };
-    }
-
-    const comments = await prisma.comment.findMany({
-      where: commentWhere,
-      include: {
-        createdBy: { select: { id: true, name: true } },
-      },
-      orderBy: { createdAt: 'asc' },
-    });
-
-    const shapedComments = comments.map((comment) => {
-      const isOwn = comment.createdById === req.user.id;
-      const maskedToOthers = comment.anonymous && !admin && !isOwn;
-      return {
-        id: comment.id,
-        message: comment.content,
-        visibility: comment.visibility,
-        sender: maskedToOthers ? 'Anonymous' : comment.createdBy.name,
-        actualSender: comment.anonymous && admin ? comment.createdBy.name : undefined,
-        createdAt: comment.createdAt,
-        userId: comment.createdById,
-        senderId: comment.createdById,
-      };
-    });
-
     const activeMembers = board.members.filter((member) => member.status === 'ACTIVE');
 
     res.status(200).json({
@@ -431,10 +355,9 @@ export const getBoardByCode = async (req: Request, res: Response): Promise<void>
       anonymousEnabled: board.anonymousEnabled,
       lastActivity: board.lastActivity,
       members: activeMembers,
-      comments: shapedComments,
       membershipRole: membership.role,
       membershipStatus: membership.status,
-      readOnly: isLeft,
+      readOnly: membership.status === 'LEFT',
       isCreator: board.createdBy === req.user.id,
     });
   } catch (error: any) {
@@ -515,7 +438,7 @@ export const updateBoardPin = async (req: Request, res: Response): Promise<void>
         membership.board,
         { role: membership.role, pinned: membership.pinned, status: membership.status },
         req.user.id,
-        membership.board.lastCommentSender?.name ?? null
+        membership.board.lastCommentSenderName ?? null
       )
     );
   } catch (error) {

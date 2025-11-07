@@ -33,6 +33,7 @@ model Board {
   lastCommentVisibility Visibility?
   lastCommentAnonymous  Boolean   @default(false)
   lastCommentSenderId   String?
+  lastCommentSenderName String?
   lastCommentSender     User?     @relation("BoardLastCommentSender", fields: [lastCommentSenderId], references: [id])
   createdBy     String
   createdByUser User              @relation("UserCreatedBoards", fields: [createdBy], references: [id])
@@ -57,6 +58,7 @@ model BoardMembership {
 
   @@unique([userId, boardId])
   @@index([userId, status], map: "idx_boardmembership_user_status")
+  @@index([userId], map: "idx_boardmembership_user")
 }
 
 model Comment {
@@ -72,6 +74,8 @@ model Comment {
   board     Board @relation(fields: [boardId], references: [id])
 
   @@index([boardId, createdAt], map: "idx_comment_board_created")
+  @@index([createdById], map: "idx_comment_created_by")
+  @@index([boardId, visibility, createdAt], map: "idx_comment_board_visibility_created")
 }
 
 enum Role {

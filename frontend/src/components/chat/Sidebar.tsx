@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 type MembershipStatus = "ACTIVE" | "LEFT";
@@ -62,7 +62,7 @@ const buildPreview = (board: SidebarBoard) => {
   return `${label}: ${board.lastCommentPreview}`;
 };
 
-export const Sidebar = ({
+export const Sidebar = React.memo(({
   boards,
   activeCode,
   unreadByBoard,
@@ -309,4 +309,4 @@ export const Sidebar = ({
       ) : null}
     </aside>
   );
-};
+});

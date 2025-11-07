@@ -5,7 +5,7 @@ const BACKEND = import.meta.env.VITE_BACKEND_URL as string;
 
 const socket = io(BACKEND, {
   withCredentials: true,
-  transports: ["polling", "websocket"],
+  transports: ["websocket", "polling"],
   reconnection: true,
   reconnectionAttempts: 10,
   reconnectionDelay: 1000,

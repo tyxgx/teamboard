@@ -192,12 +192,23 @@ export const getComments = async (req: Request, res: Response) => {
       commentWhere.createdAt = createdAtFilter;
     }
 
+    // Parse pagination params
+    const limitRaw = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+    const offsetRaw = Array.isArray(req.query.offset) ? req.query.offset[0] : req.query.offset;
+    const limit = Math.min(parseInt(String(limitRaw || '100'), 10) || 100, 100);
+    const offset = parseInt(String(offsetRaw || '0'), 10) || 0;
+
+    // Get total count for pagination metadata
+    const total = await prisma.comment.count({ where: commentWhere });
+
     const comments = await prisma.comment.findMany({
       where: commentWhere,
       include: {
         createdBy: { select: { id: true, name: true } },
       },
       orderBy: { createdAt: 'asc' },
+      take: limit,
+      skip: offset,
     });
 
     // Shape messages similar to socket events, applying anonymity rules
@@ -217,7 +228,13 @@ export const getComments = async (req: Request, res: Response) => {
       };
     });
 
-    res.json(shaped);
+    // Return backward-compatible response with pagination metadata
+    res.json({
+      comments: shaped,
+      total,
+      limit,
+      offset,
+    });
   } catch (error) {
     console.error('❌ Error fetching comments:', error);
     res.status(500).json({ message: 'Error fetching comments' });
