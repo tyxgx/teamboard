@@ -175,6 +175,7 @@ export default function BoardRoomPage() {
   const [switchingBoard, setSwitchingBoard] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
   const [socketConnected, setSocketConnected] = useState(false);
+  const [optimisticBoardName, setOptimisticBoardName] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [joinDialogOpen, setJoinDialogOpen] = useState(false);
   const [createBoardName, setCreateBoardName] = useState("");
@@ -439,6 +440,8 @@ export default function BoardRoomPage() {
               });
               setBoardDetails(details);
               mergeIncomingMessages(details.code, shapedMessages);
+              // Clear optimistic name when fresh data loads
+              setOptimisticBoardName(null);
             } catch (error) {
               // Silently fail background refresh
             }
@@ -472,6 +475,12 @@ export default function BoardRoomPage() {
         
         setBoardDetails(details);
         mergeIncomingMessages(details.code, shapedMessages);
+        // Clear optimistic name when real data loads (no flicker if names match)
+        if (optimisticBoardName === details.name) {
+          setOptimisticBoardName(null);
+        } else {
+          setOptimisticBoardName(null); // Clear anyway, real name will show
+        }
         pendingMessagesRef.current.clear();
         if (details.readOnly && activeRoomRef.current === details.code) {
           activeRoomRef.current = null;
@@ -554,6 +563,11 @@ export default function BoardRoomPage() {
         
         setBoards(sorted);
         setHiddenBoardIds((prev) => prev.filter((id) => summaries.some((board) => board.id === id)));
+        
+        // PROMPT 2/7: Start preloading all boards in background (non-blocking)
+        if (!cancelled) {
+          void preloadAllBoards(sorted, headers);
+        }
       } catch (error: any) {
         if (!cancelled) {
           console.error("Failed to bootstrap user", error);
@@ -572,6 +586,61 @@ export default function BoardRoomPage() {
       cancelled = true;
     };
   }, [getAuthHeaders, handleAuthFailure, setHiddenBoardIds]);
+  
+  // PROMPT 7: Batch preload all boards after sign-in (defined before bootstrap to avoid dependency issues)
+  const preloadAllBoards = useCallback(
+    async (boardsToPreload: BoardSummary[], headers: Record<string, string>) => {
+      // Limit to max 20 boards to avoid overwhelming API
+      const boardsToProcess = boardsToPreload.slice(0, 20);
+      
+      // Prioritize: pinned first, then active, then left
+      const sorted = [...boardsToProcess].sort((a, b) => {
+        if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+        const statusRank = (s: MembershipStatus) => (s === "ACTIVE" ? 0 : 1);
+        return statusRank(a.membershipStatus) - statusRank(b.membershipStatus);
+      });
+      
+      // Preload in batches of 5
+      const batchSize = 5;
+      for (let i = 0; i < sorted.length; i += batchSize) {
+        const batch = sorted.slice(i, i + batchSize);
+        
+        await Promise.allSettled(
+          batch.map(async (board) => {
+            // Skip if already cached
+            const cached = boardCacheRef.current.get(board.code);
+            if (cached && Date.now() - cached.timestamp < CACHE_TTL) return;
+            
+            try {
+              const boardResponse = await axios.get(`${BACKEND}/api/boards/by-code/${board.code}`, { headers });
+              const details = boardResponse.data as BoardDetails;
+              const commentsData = await axios.get(`${BACKEND}/api/comments/${details.id}?limit=100`, { headers });
+              const commentsResponseData = commentsData.data;
+              const comments: ChatMessage[] = Array.isArray(commentsResponseData) ? commentsResponseData : (commentsResponseData.comments || []);
+              const shapedMessages = comments.map((message) => ({
+                ...message,
+                boardCode: details.code,
+              }));
+              
+              boardCacheRef.current.set(board.code, {
+                details,
+                comments: shapedMessages,
+                timestamp: Date.now(),
+              });
+            } catch (error) {
+              // Silently fail - preloading shouldn't show errors
+            }
+          })
+        );
+        
+        // Small delay between batches to avoid rate limiting
+        if (i + batchSize < sorted.length) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     if (!boardCode) {
@@ -1175,7 +1244,7 @@ export default function BoardRoomPage() {
     });
   }, [boards, setUnreadByBoard]);
 
-  // Prefetch function for board data
+  // Prefetch function for board data (single board)
   const prefetchBoard = useCallback(
     async (code: string) => {
       const headers = getAuthHeaders();
@@ -1218,10 +1287,42 @@ export default function BoardRoomPage() {
         return;
       }
       
-      // Show skeleton immediately for instant feedback
-      setSwitchingBoard(code);
+      // PROMPT 1: Update title instantly from boards list (synchronous, <16ms)
+      const targetBoard = boards.find((b) => b.code === code);
+      if (targetBoard) {
+        setOptimisticBoardName(targetBoard.name);
+      }
+      
+      // PROMPT 3: Check cache and set optimistic board details immediately
+      const cached = boardCacheRef.current.get(code);
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+        // Show cached data instantly
+        setBoardDetails(cached.details);
+        mergeIncomingMessages(cached.details.code, cached.comments);
+        setSwitchingBoard(null); // No skeleton needed, we have cache
+      } else {
+        // PROMPT 4: Show skeleton immediately for uncached boards
+        setSwitchingBoard(code);
+        // PROMPT 4: Set minimal optimistic boardDetails for title
+        if (targetBoard) {
+          setBoardDetails({
+            id: "", // Will be replaced when real data loads
+            name: targetBoard.name,
+            code: targetBoard.code,
+            anonymousEnabled: targetBoard.anonymousEnabled,
+            lastActivity: targetBoard.lastActivity,
+            members: [],
+            membershipRole: targetBoard.role ?? "MEMBER",
+            membershipStatus: targetBoard.membershipStatus,
+            readOnly: targetBoard.readOnly,
+            isCreator: targetBoard.isCreator,
+          });
+        }
+        // PROMPT 6: Only clear messages if no cache (show skeleton instead)
+        setMessages([]);
+      }
+      
       setCommentsError(null);
-      // Don't clear messages immediately - let skeleton show
       setComposerValue("");
       setVisibility("EVERYONE");
       setAnonymousMode(false);
@@ -1236,7 +1337,7 @@ export default function BoardRoomPage() {
       localStorage.setItem(LAST_BOARD_KEY, code);
       navigate(`/board/${code}`);
     },
-    [boardDetails?.code, navigate, resetUnread]
+    [boards, boardDetails?.code, navigate, resetUnread, mergeIncomingMessages]
   );
 
   const handleTogglePin = useCallback(
@@ -1333,7 +1434,7 @@ export default function BoardRoomPage() {
 
       <main className="flex h-full flex-1 flex-col overflow-hidden">
         <ChatHeader
-          title={boardDetails?.name ?? "TeamBoard"}
+          title={optimisticBoardName ?? boardDetails?.name ?? "TeamBoard"}
           onOpenSidebar={() => setSidebarOpen(true)}
           onOpenRightPanel={() => {
             if (boardDetails) {
