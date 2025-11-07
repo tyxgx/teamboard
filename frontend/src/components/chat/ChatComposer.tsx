@@ -12,6 +12,7 @@ type ChatComposerProps = {
   onChangeVisibility: (value: Visibility) => void;
   isAnonymousAllowed: boolean;
   canUseAdminOnly?: boolean;
+  isAdmin?: boolean;
   disabled?: boolean;
   readOnly?: boolean;
   readOnlyMessage?: string;

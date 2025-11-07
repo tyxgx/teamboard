@@ -50,6 +50,8 @@ export const RightPanel = ({
       await navigator.clipboard.writeText(url);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
+      // Also call the prop callback if provided (for backward compatibility)
+      onCopyInvite(board.code);
     } catch (error) {
       // Fallback for older browsers
       try {
@@ -61,6 +63,8 @@ export const RightPanel = ({
         document.body.removeChild(textArea);
         setCopied(true);
         window.setTimeout(() => setCopied(false), 2000);
+        // Also call the prop callback if provided (for backward compatibility)
+        onCopyInvite(board.code);
       } catch (fallbackError) {
         console.error("Failed to copy invite link", fallbackError);
       }

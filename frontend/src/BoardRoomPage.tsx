@@ -1175,7 +1175,7 @@ export default function BoardRoomPage() {
       socketClient.off("user-joined", handleUserJoined);
       socketClient.off("user-left", handleUserLeft);
     };
-  }, [activeBoardCode, applyUnread, boardDetails, hiddenBoardIds, loadBoardDetails, navigate, updateBoardSummary, updateLastReceived, user, handleUserJoined, handleUserLeft]);
+  }, [activeBoardCode, applyUnread, boardDetails, hiddenBoardIds, loadBoardDetails, navigate, updateBoardSummary, updateLastReceived, user]);
 
   const handleSendMessage = useCallback(async () => {
     if (!user || !boardDetails || !boardDetails.id || !boardDetails.code) return;
