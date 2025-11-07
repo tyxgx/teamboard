@@ -26,6 +26,7 @@ type MessageListProps = {
   isLoading?: boolean;
   isLoadingOlder?: boolean;
   onLoadOlder?: () => void;
+  hasMoreMessages?: boolean;
 };
 
 const humanizeDate = (timestamp?: string) => {
@@ -55,6 +56,7 @@ export const MessageList = ({
   isLoading = false,
   isLoadingOlder = false,
   onLoadOlder,
+  hasMoreMessages,
 }: MessageListProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useListRef(null);
@@ -126,7 +128,7 @@ export const MessageList = ({
       const scrollPercentage = scrollTop / maxScroll;
       
       // Trigger prefetch when 80% scrolled (20% from top)
-      if (scrollPercentage >= 0.8 && !isLoadingOlderState && !isLoadingOlder && scrollTop > 0) {
+      if (scrollPercentage >= 0.8 && !isLoadingOlderState && !isLoadingOlder && scrollTop > 0 && hasMoreMessages !== false) {
         setIsLoadingOlderState(true);
         onLoadOlder();
         setTimeout(() => setIsLoadingOlderState(false), 500);
@@ -135,7 +137,7 @@ export const MessageList = ({
 
     container.addEventListener('scroll', handleScroll, { passive: true });
     return () => container.removeEventListener('scroll', handleScroll);
-  }, [onLoadOlder, isLoadingOlderState, isLoadingOlder]);
+  }, [onLoadOlder, isLoadingOlderState, isLoadingOlder, hasMoreMessages]);
 
   // Also observe top sentinel as fallback (when actually at top)
   useEffect(() => {
@@ -146,7 +148,7 @@ export const MessageList = ({
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting && !isLoadingOlderState && !isLoadingOlder) {
+        if (entries[0]?.isIntersecting && !isLoadingOlderState && !isLoadingOlder && hasMoreMessages !== false) {
           setIsLoadingOlderState(true);
           onLoadOlder();
           setTimeout(() => setIsLoadingOlderState(false), 500);
@@ -163,7 +165,7 @@ export const MessageList = ({
     return () => {
       observer.disconnect();
     };
-  }, [onLoadOlder, isLoadingOlderState, isLoadingOlder]);
+  }, [onLoadOlder, isLoadingOlderState, isLoadingOlder, hasMoreMessages]);
 
   const grouped = useMemo(() => {
     const buckets: Record<string, ChatMessage[]> = {};
@@ -266,7 +268,7 @@ export const MessageList = ({
         // TASK 2.2: Virtualized rendering for large message lists
         <div ref={containerRef} className="h-full bg-white">
           {/* Loading indicator for older messages */}
-          {(isLoadingOlder || isLoadingOlderState) && messages.length > 0 ? (
+          {(isLoadingOlder || isLoadingOlderState) && messages.length > 0 && hasMoreMessages !== false ? (
             <div className="flex justify-center py-2">
               <div className="flex items-center gap-2 text-xs text-slate-400">
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-emerald-500" />
@@ -285,7 +287,7 @@ export const MessageList = ({
             onRowsRendered={({ startIndex }) => {
               updateNearBottom();
               // Handle prefetch for older messages when scrolling near top
-              if (onLoadOlder && startIndex < 5 && !isLoadingOlderState && !isLoadingOlder) {
+              if (onLoadOlder && startIndex < 5 && !isLoadingOlderState && !isLoadingOlder && hasMoreMessages !== false) {
                 setIsLoadingOlderState(true);
                 onLoadOlder();
                 setTimeout(() => setIsLoadingOlderState(false), 500);
@@ -304,7 +306,7 @@ export const MessageList = ({
           <div ref={topSentinelRef} />
           <div className="mx-auto flex max-w-3xl flex-col gap-4">
             {/* Loading indicator for older messages */}
-            {(isLoadingOlder || isLoadingOlderState) && messages.length > 0 ? (
+            {(isLoadingOlder || isLoadingOlderState) && messages.length > 0 && hasMoreMessages !== false ? (
               <div className="flex justify-center py-2">
                 <div className="flex items-center gap-2 text-xs text-slate-400">
                   <div className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-emerald-500" />

@@ -168,13 +168,14 @@ export default function BoardRoomPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [composerValue, setComposerValue] = useState("");
   const [visibility, setVisibility] = useState<"EVERYONE" | "ADMIN_ONLY">("EVERYONE");
-  const [anonymousMode, setAnonymousMode] = useState(false);
+  const [anonymousMode, setAnonymousMode] = useState(false); // Anonymous mode OFF by default - user's choice per message
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isRightPanelOpen, setRightPanelOpen] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [commentsError, setCommentsError] = useState<string | null>(null);
   const [switchingBoard, setSwitchingBoard] = useState<string | null>(null);
+  const [hasMoreMessages, setHasMoreMessages] = useState(true);
   // TASK 2.4: Track cursor for cursor-based pagination (currently unused, reserved for future use)
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [_nextCursor, setNextCursor] = useState<string | null>(null);
@@ -183,6 +184,10 @@ export default function BoardRoomPage() {
   const [optimisticBoardName, setOptimisticBoardName] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [joinDialogOpen, setJoinDialogOpen] = useState(false);
+  const [createBoardError, setCreateBoardError] = useState<string | null>(null);
+  const [joinBoardError, setJoinBoardError] = useState<string | null>(null);
+  const [initialLoadProgress, setInitialLoadProgress] = useState(0);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [createBoardName, setCreateBoardName] = useState("");
   const [joinCodeValue, setJoinCodeValue] = useState("");
 
@@ -553,13 +558,14 @@ export default function BoardRoomPage() {
           lastActivity: details.lastActivity ?? null,
           membershipStatus: details.membershipStatus,
           readOnly: details.readOnly,
-          memberCount: details.members.length,
+          memberCount: details.members?.length || 0,
           role: details.membershipRole,
           isCreator: details.isCreator,
         });
         localStorage.setItem(LAST_BOARD_KEY, code);
         resetUnread(code);
         setCommentsError(null);
+        setSwitchingBoard(null); // Clear loading state after data loads
         return details;
       } catch (error: any) {
         if (error?.response?.status === 401) {
@@ -584,6 +590,9 @@ export default function BoardRoomPage() {
         const responseData = response.data;
         // Handle both old (array) and new (object with comments key) response formats
         const history: ChatMessage[] = Array.isArray(responseData) ? responseData : (responseData.comments || []);
+        // Reset hasMoreMessages when loading initial comments
+        const hasMore = responseData.hasMore ?? (responseData.total ? history.length < responseData.total : history.length === 50);
+        setHasMoreMessages(hasMore);
         mergeIncomingMessages(
           code,
           history.map((message) => ({ ...message, boardCode: code }))
@@ -616,6 +625,7 @@ export default function BoardRoomPage() {
 
     const bootstrap = async () => {
       try {
+        setInitialLoadProgress(25); // After cache read attempt
         // TASK 2.1: Try to get userId from token first (if we can decode it) or use a temp key
         // We'll use a temporary approach: try to read from any cached userId, or wait for auth
         let cachedBoards: BoardSummary[] | null = null;
@@ -633,6 +643,8 @@ export default function BoardRoomPage() {
         ]);
         
         if (cancelled) return;
+        
+        setInitialLoadProgress(50); // After auth response
         
         // Update state in parallel
         const userData = authResponse.data.user as User;
@@ -663,6 +675,9 @@ export default function BoardRoomPage() {
         
         setBoards(finalBoards);
         setHiddenBoardIds((prev) => prev.filter((id) => summaries.some((board) => board.id === id)));
+        
+        setInitialLoadProgress(100); // After boards response
+        setIsInitialLoad(false); // Hide progress bar
         
         // PROMPT 2/7: Start preloading all boards in background (non-blocking)
         if (!cancelled) {
@@ -756,7 +771,7 @@ export default function BoardRoomPage() {
       setLoadingHistory(false);
       setCommentsError(null);
       setComposerValue("");
-      setAnonymousMode(false);
+      setAnonymousMode(false); // Reset to default (OFF) when switching boards
       setVisibility("EVERYONE");
       setNextCursor(null); // TASK 2.4: Clear cursor when switching boards (reserved for future use)
       pendingMessagesRef.current.clear();
@@ -777,7 +792,7 @@ export default function BoardRoomPage() {
     setCommentsError(null);
     setMessages([]);
     setComposerValue("");
-    setAnonymousMode(false);
+    setAnonymousMode(false); // Reset to default (OFF)
     setVisibility("EVERYONE");
     pendingMessagesRef.current.clear();
     // Don't clear activeRoomRef or realtimeService here since we just joined above
@@ -1050,7 +1065,7 @@ export default function BoardRoomPage() {
       if (boardDetails?.code === code) {
         setBoardDetails((prev) => (prev ? { ...prev, anonymousEnabled: payload.anonymousEnabled } : prev));
         if (!payload.anonymousEnabled) {
-          setAnonymousMode(false);
+          setAnonymousMode(false); // Reset to default (OFF) if anonymous is disabled on board
         }
       }
     };
@@ -1084,7 +1099,7 @@ export default function BoardRoomPage() {
       }
 
       if (action === "left") {
-        if (userId === user.id) {
+        if (userId === user?.id) {
           updateBoardSummary(code, { membershipStatus: "LEFT", readOnly: true });
           if (activeRoomRef.current === code) {
             activeRoomRef.current = null;
@@ -1103,11 +1118,61 @@ export default function BoardRoomPage() {
       }
     };
 
+    const handleUserJoined = (payload: { name: string }) => {
+      if (!boardDetails?.code || !payload?.name) return;
+      try {
+        const systemMessage: ChatMessage = {
+          id: `system-join-${Date.now()}`,
+          sender: "System",
+          message: `${payload.name} joined the board`,
+          system: true,
+          createdAt: new Date().toISOString(),
+          visibility: "EVERYONE",
+          boardCode: boardDetails.code,
+        };
+        setMessages((prev) => [...prev, systemMessage]);
+        // Update member count in sidebar
+        if (boardDetails && updateBoardSummary) {
+          updateBoardSummary(boardDetails.code, {
+            memberCount: (boardDetails.members?.length || 0) + 1,
+          });
+        }
+      } catch (error) {
+        console.error("Error handling user joined:", error);
+      }
+    };
+
+    const handleUserLeft = (payload: { name: string }) => {
+      if (!boardDetails?.code || !payload?.name) return;
+      try {
+        const systemMessage: ChatMessage = {
+          id: `system-left-${Date.now()}`,
+          sender: "System",
+          message: `${payload.name} left the board`,
+          system: true,
+          createdAt: new Date().toISOString(),
+          visibility: "EVERYONE",
+          boardCode: boardDetails.code,
+        };
+        setMessages((prev) => [...prev, systemMessage]);
+        // Update member count in sidebar
+        if (boardDetails && updateBoardSummary) {
+          updateBoardSummary(boardDetails.code, {
+            memberCount: Math.max(0, (boardDetails.members?.length || 0) - 1),
+          });
+        }
+      } catch (error) {
+        console.error("Error handling user left:", error);
+      }
+    };
+
     socketClient.on("receive-message", handleReceiveMessage);
     socketClient.on("board-activity", handleBoardActivity);
     socketClient.on("board-updated", handleBoardUpdated);
     socketClient.on("board-deleted", handleBoardDeleted);
     socketClient.on("membership-updated", handleMembershipUpdated);
+    socketClient.on("user-joined", handleUserJoined);
+    socketClient.on("user-left", handleUserLeft);
 
     return () => {
       socketClient.off("receive-message", handleReceiveMessage);
@@ -1115,6 +1180,8 @@ export default function BoardRoomPage() {
       socketClient.off("board-updated", handleBoardUpdated);
       socketClient.off("board-deleted", handleBoardDeleted);
       socketClient.off("membership-updated", handleMembershipUpdated);
+      socketClient.off("user-joined", handleUserJoined);
+      socketClient.off("user-left", handleUserLeft);
     };
   }, [activeBoardCode, applyUnread, boardDetails, hiddenBoardIds, loadBoardDetails, navigate, updateBoardSummary, updateLastReceived, user]);
 
@@ -1187,6 +1254,10 @@ export default function BoardRoomPage() {
   const handleToggleAnonymous = useCallback(
     async (enabled: boolean) => {
       if (!boardDetails) return;
+      // Only admins can disable anonymous mode
+      if (!enabled && !isAdmin) {
+        return; // Prevent non-admins from disabling anonymous mode
+      }
       const headers = getAuthHeaders();
       if (!headers) return;
       try {
@@ -1197,7 +1268,7 @@ export default function BoardRoomPage() {
         );
         setBoardDetails((prev) => (prev ? { ...prev, anonymousEnabled: enabled } : prev));
         updateBoardSummary(boardDetails.code, { anonymousEnabled: enabled });
-        if (!enabled) setAnonymousMode(false);
+        if (!enabled) setAnonymousMode(false); // If anonymous is disabled on board, reset to default (OFF) for next message
       } catch (error: any) {
         if (error?.response?.status === 401) {
           handleAuthFailure();
@@ -1206,7 +1277,7 @@ export default function BoardRoomPage() {
         console.error("Failed to toggle anonymous mode", error);
       }
     },
-    [boardDetails, getAuthHeaders, handleAuthFailure, updateBoardSummary]
+    [boardDetails, getAuthHeaders, handleAuthFailure, updateBoardSummary, isAdmin]
   );
 
   const handleRetryComments = useCallback(async () => {
@@ -1238,6 +1309,15 @@ export default function BoardRoomPage() {
       const response = await axios.get(url, { headers });
       const responseData = response.data;
       const history: ChatMessage[] = Array.isArray(responseData) ? responseData : (responseData.comments || []);
+      
+      // Check if there are more messages to load
+      if (history.length === 0) {
+        setHasMoreMessages(false);
+      } else {
+        const hasMore = responseData.hasMore ?? (responseData.total ? currentCount + history.length < responseData.total : true);
+        setHasMoreMessages(hasMore);
+      }
+      
       // Prepend older messages to the beginning
       const olderMessages = history.map((message) => ({ ...message, boardCode: boardDetails.code }));
       setMessages((prev) => [...olderMessages, ...prev]);
@@ -1249,6 +1329,7 @@ export default function BoardRoomPage() {
   const handleCreateBoard = useCallback(async () => {
     const name = createBoardName.trim();
     if (!name) return;
+    setCreateBoardError(null);
     const headers = getAuthHeaders();
     if (!headers) return;
     try {
@@ -1259,6 +1340,8 @@ export default function BoardRoomPage() {
       );
       setCreateDialogOpen(false);
       setCreateBoardName("");
+      setCreateBoardError(null);
+      setSwitchingBoard(response.data.code); // Set loading state before navigation
       await loadBoards();
       navigate(`/board/${response.data.code}`);
     } catch (error: any) {
@@ -1266,6 +1349,8 @@ export default function BoardRoomPage() {
         handleAuthFailure();
         return;
       }
+      const errorMessage = error?.response?.data?.message || "Unable to create board. Please try again.";
+      setCreateBoardError(errorMessage);
       console.error("Unable to create board", error);
     }
   }, [createBoardName, getAuthHeaders, handleAuthFailure, loadBoards, navigate]);
@@ -1273,6 +1358,7 @@ export default function BoardRoomPage() {
   const handleJoinBoard = useCallback(async () => {
     const code = joinCodeValue.trim();
     if (!code) return;
+    setJoinBoardError(null);
     const headers = getAuthHeaders();
     if (!headers) return;
     try {
@@ -1283,6 +1369,7 @@ export default function BoardRoomPage() {
       );
       setJoinDialogOpen(false);
       setJoinCodeValue("");
+      setJoinBoardError(null);
       debouncedLoadBoards();
       const target = response.data?.board?.code ?? response.data?.code ?? code;
       navigate(`/board/${target}`);
@@ -1291,6 +1378,8 @@ export default function BoardRoomPage() {
         handleAuthFailure();
         return;
       }
+      const errorMessage = error?.response?.data?.message || "Unable to join board. Please check the code and try again.";
+      setJoinBoardError(errorMessage);
       console.error("Unable to join board", error);
     }
   }, [getAuthHeaders, handleAuthFailure, joinCodeValue, debouncedLoadBoards, navigate]);
@@ -1456,7 +1545,9 @@ export default function BoardRoomPage() {
       setCommentsError(null);
       setComposerValue("");
       setVisibility("EVERYONE");
-      setAnonymousMode(false);
+      setAnonymousMode(false); // Reset to default (OFF) when switching boards
+      setHasMoreMessages(true); // Reset when switching boards
+      setSwitchingBoard(code); // Set loading state immediately
       pendingMessagesRef.current.clear();
       if (activeRoomRef.current === boardDetails?.code) {
         activeRoomRef.current = null;
@@ -1522,7 +1613,7 @@ export default function BoardRoomPage() {
     setBoardDetails(null);
     setMessages([]);
     setComposerValue("");
-    setAnonymousMode(false);
+    setAnonymousMode(false); // Reset to default (OFF)
     setVisibility("EVERYONE");
     setCreateDialogOpen(false);
     setJoinDialogOpen(false);
@@ -1561,6 +1652,19 @@ export default function BoardRoomPage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-100">
+      {isInitialLoad && user ? (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white">
+          <div className="w-full max-w-md px-6">
+            <p className="mb-4 text-center text-sm text-slate-600">Loading your boards...</p>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+              <div
+                className="h-full bg-emerald-500 transition-all duration-300"
+                style={{ width: `${initialLoadProgress}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
       <Sidebar variant="desktop" {...sidebarCommonProps} />
 
       <main className="flex h-full flex-1 flex-col overflow-hidden">
@@ -1577,16 +1681,24 @@ export default function BoardRoomPage() {
 
         {boardDetails ? (
           <>
-            <MessageList
-              key={boardDetails.code}
-              messages={messages.map(normalizeMessage)}
-              isAdmin={isAdmin}
-              currentUserId={user?.id}
-              currentUserName={user?.name}
-              isLoading={loadingHistory || switchingBoard === boardDetails.code}
-              isLoadingOlder={loadingOlderMessages}
-              onLoadOlder={boardDetails.id ? handleLoadOlder : undefined}
-            />
+            {switchingBoard && switchingBoard !== boardDetails?.code ? (
+              <div className="flex flex-1 flex-col items-center justify-center gap-4">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-300 border-t-emerald-500" />
+                <p className="text-sm text-slate-600">Loading board...</p>
+              </div>
+            ) : (
+              <MessageList
+                key={boardDetails.code}
+                messages={messages.map(normalizeMessage)}
+                isAdmin={isAdmin}
+                currentUserId={user?.id}
+                currentUserName={user?.name}
+                isLoading={loadingHistory || switchingBoard === boardDetails.code}
+                isLoadingOlder={loadingOlderMessages}
+                onLoadOlder={boardDetails.id ? handleLoadOlder : undefined}
+                hasMoreMessages={hasMoreMessages}
+              />
+            )}
 
             {commentsError ? (
               <div className="border-t border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
@@ -1611,6 +1723,7 @@ export default function BoardRoomPage() {
               onChangeVisibility={setVisibility}
               isAnonymousAllowed={boardDetails.anonymousEnabled}
               canUseAdminOnly={isAdmin}
+              isAdmin={isAdmin}
               readOnly={readOnly}
               disabled={!user || readOnly}
               readOnlyMessage={readOnlyBanner}
@@ -1699,12 +1812,17 @@ export default function BoardRoomPage() {
         confirmLabel="Create"
         open={createDialogOpen}
         value={createBoardName}
-        onChange={setCreateBoardName}
+        onChange={(value) => {
+          setCreateBoardName(value);
+          setCreateBoardError(null);
+        }}
         onClose={() => {
           setCreateDialogOpen(false);
           setCreateBoardName("");
+          setCreateBoardError(null);
         }}
         onSubmit={handleCreateBoard}
+        error={createBoardError}
       />
 
       <InputDialog
@@ -1713,13 +1831,19 @@ export default function BoardRoomPage() {
         confirmLabel="Join"
         open={joinDialogOpen}
         value={joinCodeValue}
-        onChange={setJoinCodeValue}
+        onChange={(value) => {
+          setJoinCodeValue(value);
+          setJoinBoardError(null);
+        }}
         onClose={() => {
           setJoinDialogOpen(false);
           setJoinCodeValue("");
+          setJoinBoardError(null);
         }}
         onSubmit={handleJoinBoard}
+        error={joinBoardError}
       />
+      
     </div>
   );
 }
@@ -1733,6 +1857,7 @@ type InputDialogProps = {
   onChange: (value: string) => void;
   onSubmit: () => void;
   onClose: () => void;
+  error?: string | null;
 };
 
 const InputDialog = ({
@@ -1744,6 +1869,7 @@ const InputDialog = ({
   onChange,
   onSubmit,
   onClose,
+  error,
 }: InputDialogProps) => {
   if (!open) return null;
 
@@ -1763,12 +1889,21 @@ const InputDialog = ({
           onKeyDown={(event) => {
             if (event.key === "Enter") {
               event.preventDefault();
-              onSubmit();
+              if (value.trim()) {
+                onSubmit();
+              }
             }
           }}
           placeholder={placeholder}
-          className="mt-4 w-full rounded-xl border border-slate-200 px-4 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+          className={`mt-4 w-full rounded-xl border px-4 py-2 text-sm focus:outline-none focus:ring-2 ${
+            error
+              ? "border-red-300 focus:border-red-500 focus:ring-red-200"
+              : "border-slate-200 focus:border-emerald-500 focus:ring-emerald-200"
+          }`}
         />
+        {error ? (
+          <p className="mt-2 text-sm text-red-600">{error}</p>
+        ) : null}
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
           <button
             type="button"

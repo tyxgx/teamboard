@@ -41,13 +41,34 @@ export const RightPanel = ({
       ? "flex h-full w-full flex-col overflow-y-auto bg-white p-6"
       : "hidden h-full w-[320px] flex-col overflow-y-auto border-l border-slate-200 bg-white p-6 lg:flex";
 
-  const memberCount = board.members.length;
+  const memberCount = board.members?.length || 0;
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = () => {
-    onCopyInvite(board.code);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2000);
+  const handleCopy = async () => {
+    const url = `${window.location.origin}/board/${board.code}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+      // Also call the prop callback if provided (for backward compatibility)
+      onCopyInvite(board.code);
+    } catch (error) {
+      // Fallback for older browsers
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = url;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 2000);
+        // Also call the prop callback if provided (for backward compatibility)
+        onCopyInvite(board.code);
+      } catch (fallbackError) {
+        console.error("Failed to copy invite link", fallbackError);
+      }
+    }
   };
 
   return (
@@ -65,14 +86,16 @@ export const RightPanel = ({
 
       <section className="rounded-2xl bg-slate-50 px-5 py-4 shadow-sm">
         <h3 className="text-xs font-semibold uppercase tracking-widest text-slate-500">Invite code</h3>
-        <p className="mt-2 select-all text-lg font-semibold text-slate-900">{board.code}</p>
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-2 flex items-center gap-2">
+          <p className="select-all text-lg font-semibold text-slate-900">{board.code}</p>
           <button
             type="button"
             onClick={handleCopy}
-            className="inline-flex items-center gap-2 rounded-full border border-emerald-500 px-4 py-2 text-xs font-semibold text-emerald-600 transition hover:bg-emerald-50"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-600 transition hover:bg-slate-50 hover:border-emerald-500 hover:text-emerald-600"
+            aria-label="Copy invite link"
+            title="Copy invite link"
           >
-            Copy invite link
+            {copied ? "✓" : "📋"}
           </button>
           {copied ? <span className="text-xs font-medium text-emerald-600">Copied!</span> : null}
         </div>
@@ -84,7 +107,7 @@ export const RightPanel = ({
       <section className="mt-6 rounded-2xl bg-slate-50 px-5 py-4 shadow-sm">
         <h3 className="text-sm font-semibold text-slate-900">Members ({memberCount})</h3>
         <ul className="mt-4 space-y-2">
-          {board.members.length === 0 ? (
+          {(!board.members || board.members.length === 0) ? (
             <li className="rounded-xl bg-white px-3 py-2 text-xs text-slate-500">No members yet.</li>
           ) : (
             board.members.map((member) => (
