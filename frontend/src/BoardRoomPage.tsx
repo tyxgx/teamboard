@@ -188,6 +188,12 @@ export default function BoardRoomPage() {
   const [joinBoardError, setJoinBoardError] = useState<string | null>(null);
   const [initialLoadProgress, setInitialLoadProgress] = useState(0);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return document.documentElement.classList.contains('dark');
+    }
+    return false;
+  });
   const [createBoardName, setCreateBoardName] = useState("");
   const [joinCodeValue, setJoinCodeValue] = useState("");
 
@@ -613,6 +619,20 @@ export default function BoardRoomPage() {
     },
     [getAuthHeaders, handleAuthFailure, mergeIncomingMessages]
   );
+
+  // Sync dark mode state with DOM on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('darkMode');
+      const shouldBeDark = saved === 'true';
+      setIsDarkMode(shouldBeDark);
+      if (shouldBeDark) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    }
+  }, []);
 
   useEffect(() => {
     const headers = getAuthHeaders();
@@ -1840,14 +1860,19 @@ export default function BoardRoomPage() {
       <button
         type="button"
         onClick={() => {
-          const current = document.documentElement.classList.contains('dark');
-          document.documentElement.classList.toggle('dark');
-          localStorage.setItem('darkMode', (!current).toString());
+          const newDarkMode = !isDarkMode;
+          setIsDarkMode(newDarkMode);
+          if (newDarkMode) {
+            document.documentElement.classList.add('dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+          }
+          localStorage.setItem('darkMode', newDarkMode.toString());
         }}
         className="fixed bottom-6 right-6 z-50 flex h-12 w-12 items-center justify-center rounded-full bg-slate-800 text-white shadow-lg transition hover:bg-slate-700 dark:bg-slate-200 dark:text-slate-900 dark:hover:bg-slate-300"
-        aria-label="Toggle dark mode"
+        aria-label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
       >
-        {document.documentElement.classList.contains('dark') ? "☀️" : "🌙"}
+        {isDarkMode ? "☀️" : "🌙"}
       </button>
     </div>
   );
