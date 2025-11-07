@@ -98,10 +98,22 @@ export const createComment = async (req: Request, res: Response) => {
     });
 
     try {
+      const io = getIO();
+      const room = updatedBoard.code;
+      
+      // Verify there are connected clients before emitting
+      const roomSockets = await io.in(room).fetchSockets();
+      if (roomSockets.length === 0) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn(`⚠️ No connected clients in room: ${room}`);
+        }
+      }
+      
       const senderDisplay = comment.anonymous ? 'Anonymous' : comment.createdBy.name;
       const actualSender = comment.anonymous ? comment.createdBy.name : undefined;
 
-      getIO().to(updatedBoard.code).emit('board-activity', {
+      // Emit board activity update
+      io.to(room).emit('board-activity', {
         boardCode: updatedBoard.code,
         lastActivity: updatedBoard.lastActivity.toISOString(),
         lastCommentPreview: updatedBoard.lastCommentPreview,
@@ -112,21 +124,25 @@ export const createComment = async (req: Request, res: Response) => {
         lastCommentSenderName: comment.createdBy.name,
       });
 
-      getIO()
-        .to(updatedBoard.code)
-        .emit('receive-message', {
-          id: comment.id,
-          boardCode: updatedBoard.code,
-          message: comment.content,
-          visibility: comment.visibility,
-          sender: senderDisplay,
-          actualSender,
-          createdAt: comment.createdAt.toISOString(),
-          senderId: req.user.id,
-          clientMessageId: clientMessageId ?? null,
-        });
+      // Emit message with delivery verification
+      io.to(room).emit('receive-message', {
+        id: comment.id,
+        boardCode: updatedBoard.code,
+        message: comment.content,
+        visibility: comment.visibility,
+        sender: senderDisplay,
+        actualSender,
+        createdAt: comment.createdAt.toISOString(),
+        senderId: req.user.id,
+        clientMessageId: clientMessageId ?? null,
+      });
+      
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`📤 Emitted message to room ${room}, ${roomSockets.length} clients`);
+      }
     } catch (error) {
-      console.warn('Socket not initialised when emitting board-activity', error);
+      console.error('❌ Socket emit error:', error);
+      // Don't fail the request if socket emit fails - message is already saved
     }
 
     res.status(201).json({

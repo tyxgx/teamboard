@@ -2,9 +2,10 @@ type ChatHeaderProps = {
   title: string;
   onOpenSidebar?: () => void;
   onOpenRightPanel?: () => void;
+  socketConnected?: boolean;
 };
 
-export const ChatHeader = ({ title, onOpenSidebar, onOpenRightPanel }: ChatHeaderProps) => (
+export const ChatHeader = ({ title, onOpenSidebar, onOpenRightPanel, socketConnected = true }: ChatHeaderProps) => (
   <header className="flex min-h-[64px] items-center justify-between border-b border-slate-200 bg-white px-4 py-3 md:min-h-[76px] md:px-6 md:py-4">
     <button
       type="button"
@@ -15,8 +16,19 @@ export const ChatHeader = ({ title, onOpenSidebar, onOpenRightPanel }: ChatHeade
       ☰
     </button>
 
-    <div className="flex-1 text-center">
+    <div className="flex flex-1 items-center justify-center gap-2">
       <h2 className="text-lg font-semibold text-slate-900 sm:text-xl">{title}</h2>
+      <div className="flex items-center gap-1.5" title={socketConnected ? "Connected" : "Reconnecting..."}>
+        <div
+          className={`h-2 w-2 rounded-full ${
+            socketConnected ? "bg-emerald-500" : "bg-amber-500 animate-pulse"
+          }`}
+          aria-label={socketConnected ? "Connected" : "Reconnecting"}
+        />
+        {!socketConnected && (
+          <span className="text-xs text-slate-500">Reconnecting...</span>
+        )}
+      </div>
     </div>
 
     <button

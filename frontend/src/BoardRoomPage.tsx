@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
-import socketClient from "./socket";
+import socketClient, { getSocketConnectionState, onConnectionChange } from "./socket";
 import realtimeService, { initRealtimeService } from "./realtime/RealtimeService";
 import { Sidebar } from "./components/chat/Sidebar";
 import { ChatHeader } from "./components/chat/ChatHeader";
@@ -173,6 +173,7 @@ export default function BoardRoomPage() {
   const [commentsError, setCommentsError] = useState<string | null>(null);
   const [switchingBoard, setSwitchingBoard] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
+  const [socketConnected, setSocketConnected] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [joinDialogOpen, setJoinDialogOpen] = useState(false);
   const [createBoardName, setCreateBoardName] = useState("");
@@ -208,7 +209,24 @@ export default function BoardRoomPage() {
 
   useEffect(() => {
     initRealtimeService();
+    setSocketConnected(getSocketConnectionState());
+    
+    // Monitor socket connection state
+    const cleanup = onConnectionChange((connected) => {
+      setSocketConnected(connected);
+      // Rejoin room when connection is restored (handled in separate effect)
+    });
+    
+    return cleanup;
   }, []);
+  
+  // Separate effect to handle rejoin on connection restore
+  useEffect(() => {
+    if (socketConnected && boardDetails?.code && user?.name && !readOnly) {
+      realtimeService.rejoinOnConnect(user.name);
+      activeRoomRef.current = realtimeService.getCurrentRoom();
+    }
+  }, [socketConnected, boardDetails?.code, user?.name, readOnly]);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -616,10 +634,27 @@ export default function BoardRoomPage() {
   useEffect(() => {
     if (!boardDetails?.id || !boardDetails.code || readOnly) return;
     let cancelled = false;
-    const intervalId = window.setInterval(() => {
+    
+    // Adjust polling frequency based on socket connection state
+    const getPollInterval = () => {
+      return socketConnected ? 3000 : 2000; // Poll more frequently if socket is disconnected
+    };
+    
+    const pollForMessages = () => {
       if (cancelled) return;
       const code = boardDetails.code;
-      if (!socketClient.connected) return;
+      
+      // If socket is disconnected, always poll (don't check lastReceived)
+      if (!socketConnected) {
+        const lastDelta = lastDeltaRunRef.current[code] ?? 0;
+        if (Date.now() - lastDelta < 2000) {
+          return;
+        }
+        void fetchDeltaForBoard(code, boardDetails.id);
+        return;
+      }
+      
+      // If socket is connected, use normal polling logic
       const lastISO = lastReceivedRef.current[code];
       if (lastISO) {
         const lastTime = new Date(lastISO).getTime();
@@ -632,13 +667,15 @@ export default function BoardRoomPage() {
         return;
       }
       void fetchDeltaForBoard(code, boardDetails.id);
-    }, 3000);
+    };
+    
+    const intervalId = window.setInterval(pollForMessages, getPollInterval());
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [boardDetails?.code, boardDetails?.id, fetchDeltaForBoard, readOnly]);
+  }, [boardDetails?.code, boardDetails?.id, fetchDeltaForBoard, readOnly, socketConnected]);
 
   useEffect(() => {
     const handleJoinedRoom = (payload: { boardCode: string }) => {
@@ -702,13 +739,32 @@ export default function BoardRoomPage() {
 
       if (targetSnapshot.code === activeBoardCode) {
         setMessages((prev) => {
-          if (normalized.clientMessageId && pendingMessagesRef.current.has(normalized.clientMessageId)) {
-            pendingMessagesRef.current.delete(normalized.clientMessageId);
-            return prev.map((message) =>
-              message.clientMessageId === normalized.clientMessageId ? { ...normalized } : message
+          // Deduplicate messages by ID or clientMessageId
+          const existingIndex = prev.findIndex(
+            (msg) => msg.id === normalized.id || 
+            (normalized.clientMessageId && msg.clientMessageId === normalized.clientMessageId)
+          );
+          
+          if (existingIndex >= 0) {
+            // Update existing message
+            if (normalized.clientMessageId && pendingMessagesRef.current.has(normalized.clientMessageId)) {
+              pendingMessagesRef.current.delete(normalized.clientMessageId);
+            }
+            return prev.map((message, idx) =>
+              idx === existingIndex ? { ...normalized } : message
             );
           }
-          return [...prev, normalized];
+          
+          // Add new message, ensuring proper order by createdAt
+          const newMessages = [...prev, normalized].sort(
+            (a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime()
+          );
+          
+          if (normalized.clientMessageId) {
+            pendingMessagesRef.current.delete(normalized.clientMessageId);
+          }
+          
+          return newMessages;
         });
       } else {
         if (targetSnapshot.readOnly || hiddenBoardIds.includes(targetSnapshot.id)) {
@@ -1209,6 +1265,7 @@ export default function BoardRoomPage() {
               setRightPanelOpen(true);
             }
           }}
+          socketConnected={socketConnected}
         />
 
         {boardDetails ? (
@@ -1425,3 +1482,4 @@ const InputDialog = ({
     </div>
   );
 };
+
