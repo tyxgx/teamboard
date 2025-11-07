@@ -10,7 +10,7 @@ import { ChatComposer } from "./components/chat/ChatComposer";
 import { RightPanel } from "./components/chat/RightPanel";
 import { ConfirmModal } from "./components/ui/ConfirmModal";
 // TASK 2.1: Import IndexedDB cache services
-import { boardsCache, boardDetailsCache, mergeCacheData } from "./cache/cacheService";
+import { boardsCache, boardDetailsCache } from "./cache/cacheService";
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL;
 const HIDDEN_STORAGE_KEY = "tb.hiddenBoards";
@@ -175,8 +175,9 @@ export default function BoardRoomPage() {
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const [commentsError, setCommentsError] = useState<string | null>(null);
   const [switchingBoard, setSwitchingBoard] = useState<string | null>(null);
-  // TASK 2.4: Track cursor for cursor-based pagination
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  // TASK 2.4: Track cursor for cursor-based pagination (currently unused, reserved for future use)
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_nextCursor, setNextCursor] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalState>(null);
   const [socketConnected, setSocketConnected] = useState(false);
   const [optimisticBoardName, setOptimisticBoardName] = useState<string | null>(null);
@@ -757,7 +758,7 @@ export default function BoardRoomPage() {
       setComposerValue("");
       setAnonymousMode(false);
       setVisibility("EVERYONE");
-      setNextCursor(null); // TASK 2.4: Clear cursor when switching boards
+      setNextCursor(null); // TASK 2.4: Clear cursor when switching boards (reserved for future use)
       pendingMessagesRef.current.clear();
       activeRoomRef.current = null;
       realtimeService.clearRoom();

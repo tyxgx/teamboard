@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef } from "react";
+import React, { useMemo, useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
 type MembershipStatus = "ACTIVE" | "LEFT";
@@ -85,7 +85,7 @@ export const Sidebar = React.memo(({
   const [accountMenu, setAccountMenu] = useState(false);
   const prefetchTimeoutRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   // TASK 3.5: Intersection Observer for intelligent prefetching
-  const boardRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const boardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   const filteredBoards = useMemo(() => {
     const trimmed = query.trim().toLowerCase();

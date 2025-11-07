@@ -1,5 +1,5 @@
 // TASK 2.1: IndexedDB database setup using Dexie.js for persistent local cache
-import Dexie, { Table } from 'dexie';
+import Dexie, { type Table } from 'dexie';
 
 // Import types from BoardRoomPage (we'll need to define these or import them)
 // For now, using any to avoid circular dependencies - we'll type properly in cacheService

@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { FixedSizeList as List } from "react-window";
+import { List, useListRef } from "react-window";
+import type { RowComponentProps } from "react-window";
 import { MessageBubble } from "./MessageBubble";
 
 export type ChatMessage = {
@@ -56,7 +57,7 @@ export const MessageList = ({
   onLoadOlder,
 }: MessageListProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const listRef = useRef<List>(null);
+  const listRef = useListRef(null);
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const [nearBottom, setNearBottom] = useState(true);
   const [isLoadingOlderState, setIsLoadingOlderState] = useState(false);
@@ -65,7 +66,7 @@ export const MessageList = ({
   const scrollToBottom = (behavior: ScrollBehavior = "smooth", itemCount?: number) => {
     if (listRef.current && itemCount !== undefined) {
       // Virtualized list - scroll to end
-      listRef.current.scrollToItem(itemCount - 1, "end");
+      listRef.current?.scrollToRow({ index: itemCount - 1, align: "end", behavior: behavior === "smooth" ? "smooth" : "instant" });
     } else {
       const el = containerRef.current;
       if (!el) return;
@@ -106,15 +107,6 @@ export const MessageList = ({
   useEffect(() => {
     updateNearBottom();
   }, []);
-
-  useEffect(() => {
-    if (nearBottom && !shouldVirtualize) {
-      scrollToBottom(messages.length <= 2 ? "auto" : "smooth");
-    } else if (nearBottom && shouldVirtualize && listRef.current) {
-      // For virtualized list, scroll to end when new messages arrive
-      listRef.current.scrollToItem(virtualItems.length - 1, "end");
-    }
-  }, [messages, typingIndicator, nearBottom, shouldVirtualize, virtualItems.length]);
 
   // Prefetch when user scrolls near top (80% scrolled = 20% from top)
   useEffect(() => {
@@ -211,10 +203,20 @@ export const MessageList = ({
   // TASK 2.2: Only virtualize if we have more than 50 messages
   const shouldVirtualize = messages.length > 50;
 
+  // TASK 2.2: Scroll to bottom when new messages arrive (after virtualItems is defined)
+  useEffect(() => {
+    if (nearBottom && !shouldVirtualize) {
+      scrollToBottom(messages.length <= 2 ? "auto" : "smooth");
+    } else if (nearBottom && shouldVirtualize && listRef.current && virtualItems.length > 0) {
+      // For virtualized list, scroll to end when new messages arrive
+      listRef.current?.scrollToRow({ index: virtualItems.length - 1, align: "end", behavior: "smooth" });
+    }
+  }, [messages, typingIndicator, nearBottom, shouldVirtualize, virtualItems.length]);
+
   // TASK 2.2: Render function for virtualized list items
-  const renderVirtualItem = ({ index, style }: { index: number; style: React.CSSProperties }) => {
+  const renderVirtualItem = ({ index, style }: RowComponentProps) => {
     const item = virtualItems[index];
-    if (!item) return null;
+    if (!item) return <div style={style} />;
 
     if (item.type === 'header') {
       return (
@@ -273,24 +275,23 @@ export const MessageList = ({
             </div>
           ) : null}
           <List
-            ref={listRef}
-            height={containerHeight}
-            itemCount={virtualItems.length}
-            itemSize={80} // Approximate height per item (header: ~40px, message: ~80px)
-            width="100%"
-            onScroll={({ scrollOffset }) => {
+            listRef={listRef}
+            defaultHeight={containerHeight}
+            rowCount={virtualItems.length}
+            rowHeight={80} // Approximate height per item (header: ~40px, message: ~80px)
+            rowComponent={renderVirtualItem}
+            rowProps={{}}
+            style={{ padding: '16px', height: containerHeight }}
+            onRowsRendered={({ startIndex }) => {
               updateNearBottom();
               // Handle prefetch for older messages when scrolling near top
-              if (onLoadOlder && scrollOffset < 200 && !isLoadingOlderState && !isLoadingOlder) {
+              if (onLoadOlder && startIndex < 5 && !isLoadingOlderState && !isLoadingOlder) {
                 setIsLoadingOlderState(true);
                 onLoadOlder();
                 setTimeout(() => setIsLoadingOlderState(false), 500);
               }
             }}
-            style={{ padding: '16px' }}
-          >
-            {renderVirtualItem}
-          </List>
+          />
         </div>
       ) : (
         // Non-virtualized rendering for small message lists (<50 messages)
