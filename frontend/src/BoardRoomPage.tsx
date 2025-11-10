@@ -2568,10 +2568,11 @@ export default function BoardRoomPage() {
             </div>
           }
         confirmLabel={`Delete ${modal?.boardNames.length ?? 0} ${(modal?.boardNames.length ?? 0) === 1 ? "board" : "boards"}`}
-        confirmVariant="danger"
-        onConfirm={executeBulkDeleteBoards}
-        onCancel={() => setModal(null)}
-      />
+          confirmVariant="danger"
+          onConfirm={executeBulkDeleteBoards}
+          onCancel={() => setModal(null)}
+        />
+      ) : null}
 
       <InputDialog
         title="Create a board"
