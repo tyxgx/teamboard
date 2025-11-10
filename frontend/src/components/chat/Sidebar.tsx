@@ -252,7 +252,6 @@ export const Sidebar = React.memo(({
               const preview = buildPreview(board);
               const timeLabel = formatRelative(board.lastCommentAt ?? board.lastActivity);
               const isSelected = selectedBoardIds.has(board.id);
-              const canDelete = board.isCreator || board.role === "ADMIN";
 
               return (
                 <div key={board.id} className="group relative">
@@ -426,7 +425,6 @@ export const Sidebar = React.memo(({
               const selectedBoards = filteredBoards.filter((b) => selectedBoardIds.has(b.id));
               const canDeleteBoards = selectedBoards.filter((b) => b.isCreator || b.role === "ADMIN");
               const canLeaveBoards = selectedBoards.filter((b) => b.membershipStatus === "ACTIVE" && !(b.isCreator || b.role === "ADMIN"));
-              const hasBoth = canDeleteBoards.length > 0 && canLeaveBoards.length > 0;
 
               return (
                 <>

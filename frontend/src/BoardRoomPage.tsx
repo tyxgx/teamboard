@@ -2532,11 +2532,11 @@ export default function BoardRoomPage() {
         onConfirm={handleLeaveBoard}
         onCancel={() => setModal(null)}
       />
-      <ConfirmModal
-        open={modal?.type === "bulk-leave"}
-        title={`Leave ${modal?.boardNames.length ?? 0} ${(modal?.boardNames.length ?? 0) === 1 ? "board" : "boards"}?`}
-        description={
-          modal?.type === "bulk-leave" ? (
+      {modal?.type === "bulk-leave" ? (
+        <ConfirmModal
+          open={true}
+          title={`Leave ${modal.boardNames.length} ${modal.boardNames.length === 1 ? "board" : "boards"}?`}
+          description={
             <div>
               <p className="mb-2">You won't receive new messages after leaving, but you can still read past history.</p>
               <p className="text-sm font-medium">Boards:</p>
@@ -2546,17 +2546,17 @@ export default function BoardRoomPage() {
                 ))}
               </ul>
             </div>
-          ) : undefined
-        }
-        confirmLabel={`Leave ${modal?.boardNames.length ?? 0} ${(modal?.boardNames.length ?? 0) === 1 ? "board" : "boards"}`}
-        onConfirm={executeBulkLeaveBoards}
-        onCancel={() => setModal(null)}
-      />
-      <ConfirmModal
-        open={modal?.type === "bulk-delete"}
-        title={`Delete ${modal?.boardNames.length ?? 0} ${(modal?.boardNames.length ?? 0) === 1 ? "board" : "boards"}?`}
-        description={
-          modal?.type === "bulk-delete" ? (
+          }
+          confirmLabel={`Leave ${modal.boardNames.length} ${modal.boardNames.length === 1 ? "board" : "boards"}`}
+          onConfirm={executeBulkLeaveBoards}
+          onCancel={() => setModal(null)}
+        />
+      ) : null}
+      {modal?.type === "bulk-delete" ? (
+        <ConfirmModal
+          open={true}
+          title={`Delete ${modal.boardNames.length} ${modal.boardNames.length === 1 ? "board" : "boards"}?`}
+          description={
             <div>
               <p className="mb-2 text-red-600">This action cannot be undone. All messages and members will be permanently removed.</p>
               <p className="text-sm font-medium">Boards:</p>
@@ -2566,8 +2566,7 @@ export default function BoardRoomPage() {
                 ))}
               </ul>
             </div>
-          ) : undefined
-        }
+          }
         confirmLabel={`Delete ${modal?.boardNames.length ?? 0} ${(modal?.boardNames.length ?? 0) === 1 ? "board" : "boards"}`}
         confirmVariant="danger"
         onConfirm={executeBulkDeleteBoards}
