@@ -9,6 +9,8 @@ import {
   updateBoardPin,
   leaveBoard,
   deleteBoard,
+  bulkLeaveBoards,
+  bulkDeleteBoards,
 } from '../controllers/board.controller';
 import { authenticate } from '../middlewares/auth.middleware';
 import { validate } from '../middlewares/validate';
@@ -35,6 +37,10 @@ router.patch('/:id/pin', authenticate, validate(boardPinSchema), updateBoardPin)
 router.delete('/:id/leave', authenticate, leaveBoard);
 
 router.delete('/:id', authenticate, deleteBoard);
+
+// Bulk operations
+router.post('/bulk-leave', authenticate, bulkLeaveBoards);
+router.post('/bulk-delete', authenticate, bulkDeleteBoards);
 
 // Get a specific board with filtered comments
 router.get('/:id', authenticate, getBoardById);

@@ -15,6 +15,7 @@ export type ChatMessage = {
   system?: boolean;
   userId?: string;
   senderId?: string;
+  status?: "sending" | "sent" | "failed";
 };
 
 type MessageListProps = {
@@ -244,9 +245,20 @@ export const MessageList = ({
     const isOwnByName = comparableName && currentUserName ? comparableName === currentUserName : false;
     const isOwn = Boolean(isOwnById || isOwnByName);
     const createdAt = msg.createdAt ?? new Date().toISOString();
+    
+    // Group messages: reduce spacing if same sender and within 2 minutes
+    const prevItem = index > 0 ? virtualItems[index - 1] : null;
+    const prevMsg = prevItem && 'message' in prevItem ? prevItem.message : null;
+    const isGrouped = prevMsg && 
+      !prevMsg.system &&
+      prevMsg.sender === msg.sender && 
+      prevMsg.userId === msg.userId &&
+      prevMsg.createdAt && 
+      new Date(createdAt).getTime() - new Date(prevMsg.createdAt).getTime() < 120000; // 2 minutes
+    const gap = isGrouped ? "gap-0.5" : "gap-1";
 
     return (
-      <div style={style} className="flex flex-col gap-3">
+      <div style={style} className={`flex flex-col ${gap}`}>
         <MessageBubble
           key={item.key}
           isOwn={isOwn}
@@ -256,7 +268,18 @@ export const MessageList = ({
           actualSender={actualName}
           timestamp={createdAt}
         >
-          {msg.message}
+          <span>{msg.message}</span>
+          {msg.status === "sending" ? (
+            <span className="ml-2 inline-flex items-center text-[11px] opacity-60">
+              <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>
+              sending
+            </span>
+          ) : msg.status === "sent" ? (
+            <span className="ml-2 inline-flex items-center text-[11px] opacity-70">✓</span>
+          ) : null}
+          {msg.status === "failed" ? (
+            <span className="ml-2 align-middle text-[10px] text-red-500">failed</span>
+          ) : null}
         </MessageBubble>
       </div>
     );
@@ -266,7 +289,7 @@ export const MessageList = ({
     <div className="relative flex-1 overflow-hidden">
       {shouldVirtualize ? (
         // TASK 2.2: Virtualized rendering for large message lists
-        <div ref={containerRef} className="h-full bg-white">
+        <div ref={containerRef} className="h-full bg-gradient-to-b from-slate-50 via-slate-50/80 to-slate-100/50">
           {/* Loading indicator for older messages */}
           {(isLoadingOlder || isLoadingOlderState) && messages.length > 0 && hasMoreMessages !== false ? (
             <div className="flex justify-center py-2">
@@ -300,11 +323,11 @@ export const MessageList = ({
         <div
           ref={containerRef}
           onScroll={updateNearBottom}
-          className="h-full overflow-y-auto bg-white px-3 py-4 md:px-6 md:py-6"
+          className="h-full overflow-y-auto bg-gradient-to-b from-slate-50 via-slate-50/80 to-slate-100/50 py-4"
           style={{ scrollBehavior: "smooth" }}
         >
           <div ref={topSentinelRef} />
-          <div className="mx-auto flex max-w-3xl flex-col gap-4">
+          <div className="flex flex-col gap-1">
             {/* Loading indicator for older messages */}
             {(isLoadingOlder || isLoadingOlderState) && messages.length > 0 && hasMoreMessages !== false ? (
               <div className="flex justify-center py-2">
@@ -317,7 +340,7 @@ export const MessageList = ({
             {isLoading && messages.length === 0 ? (
               <>
                 {[...Array(5)].map((_, i) => (
-                  <div key={i} className="flex w-full gap-3 justify-start animate-pulse">
+                  <div key={i} className="flex w-full gap-2 justify-start animate-pulse px-4">
                     <div className="w-9" aria-hidden />
                     <div className="max-w-[65%] rounded-2xl border border-slate-200 bg-slate-100 px-4 py-3 shadow-sm">
                       <div className="mb-2 h-4 w-24 bg-slate-300 rounded" />
@@ -342,7 +365,7 @@ export const MessageList = ({
                       <span className="absolute inset-x-0 h-px bg-slate-200" aria-hidden />
                     </div>
                   ) : null}
-                  <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1">
                     {bucket.map((msg, index) => {
                       if (msg.system) {
                         return (
@@ -362,19 +385,41 @@ export const MessageList = ({
                       const isOwnByName = comparableName && currentUserName ? comparableName === currentUserName : false;
                       const isOwn = Boolean(isOwnById || isOwnByName);
                       const createdAt = msg.createdAt ?? new Date().toISOString();
+                      
+                      // Group messages: reduce spacing if same sender and within 2 minutes
+                      const prevMsg = index > 0 ? bucket[index - 1] : null;
+                      const isGrouped = prevMsg && 
+                        !prevMsg.system &&
+                        prevMsg.sender === msg.sender && 
+                        prevMsg.userId === msg.userId &&
+                        prevMsg.createdAt && 
+                        new Date(createdAt).getTime() - new Date(prevMsg.createdAt).getTime() < 120000; // 2 minutes
+                      const gap = isGrouped ? "mb-0.5" : "mb-1";
 
                       return (
-                        <MessageBubble
-                          key={msg.id ?? msg.clientMessageId ?? `${label}-${index}`}
-                          isOwn={isOwn}
-                          isAnonymous={msg.sender === "Anonymous"}
-                          audience={msg.visibility}
-                          authorName={msg.sender}
-                          actualSender={actualName}
-                          timestamp={createdAt}
-                        >
-                          {msg.message}
-                        </MessageBubble>
+                        <div key={msg.id ?? msg.clientMessageId ?? `${label}-${index}`} className={gap}>
+                          <MessageBubble
+                            isOwn={isOwn}
+                            isAnonymous={msg.sender === "Anonymous"}
+                            audience={msg.visibility}
+                            authorName={msg.sender}
+                            actualSender={actualName}
+                            timestamp={createdAt}
+                          >
+                            <span>{msg.message}</span>
+                            {msg.status === "sending" ? (
+                              <span className="ml-2 inline-flex items-center text-[11px] opacity-60">
+                                <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>
+                                sending
+                              </span>
+                            ) : msg.status === "sent" ? (
+                              <span className="ml-2 inline-flex items-center text-[11px] opacity-70">✓</span>
+                            ) : null}
+                            {msg.status === "failed" ? (
+                              <span className="ml-2 align-middle text-[10px] text-red-500">failed</span>
+                            ) : null}
+                          </MessageBubble>
+                        </div>
                       );
                     })}
                   </div>

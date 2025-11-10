@@ -535,9 +535,10 @@ export const deleteBoard = async (req: Request, res: Response): Promise<void> =>
     });
     ensureBoardExists(board);
 
+    // Allow deletion if user has any membership (ACTIVE or LEFT) in the board
     const membership = await getBoardMembership(req.user.id, id);
-    if (!membership || membership.status !== 'ACTIVE' || !isAdmin(req.user.id, board, membership)) {
-      res.status(403).json({ message: 'Only admins can delete this board' });
+    if (!membership) {
+      res.status(403).json({ message: 'You must be a member of this board to delete it' });
       return;
     }
 
@@ -561,5 +562,165 @@ export const deleteBoard = async (req: Request, res: Response): Promise<void> =>
     }
     console.error('❌ Error deleting board:', error);
     res.status(500).json({ message: 'Error deleting board' });
+  }
+};
+
+export const bulkLeaveBoards = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { boardIds } = req.body as { boardIds: string[] };
+
+    if (!Array.isArray(boardIds) || boardIds.length === 0) {
+      res.status(400).json({ message: 'boardIds must be a non-empty array' });
+      return;
+    }
+
+    // Validate user has membership in all boards
+    const memberships = await prisma.boardMembership.findMany({
+      where: {
+        userId: req.user.id,
+        boardId: { in: boardIds },
+      },
+      include: {
+        board: { select: { code: true } },
+      },
+    });
+
+    const validBoardIds = memberships
+      .filter((m) => m.status === 'ACTIVE')
+      .map((m) => m.boardId);
+
+    if (validBoardIds.length === 0) {
+      res.status(200).json({ successCount: 0, failureCount: boardIds.length, results: [] });
+      return;
+    }
+
+    // Update all memberships in a single transaction
+    await prisma.$transaction(
+      validBoardIds.map((boardId) =>
+        prisma.boardMembership.update({
+          where: { userId_boardId: { userId: req.user.id, boardId } },
+          data: {
+            status: 'LEFT',
+            leftAt: new Date(),
+            pinned: false,
+          },
+        })
+      )
+    );
+
+    // Emit socket events for each board
+    const io = getIO();
+    memberships.forEach((membership) => {
+      if (validBoardIds.includes(membership.boardId)) {
+        try {
+          io.to(membership.board.code).emit('membership-updated', {
+            boardCode: membership.board.code,
+            userId: req.user.id,
+            action: 'left',
+          });
+        } catch (socketError) {
+          console.warn('Socket error emitting membership-updated', socketError);
+        }
+      }
+    });
+
+    const successCount = validBoardIds.length;
+    const failureCount = boardIds.length - successCount;
+
+    res.status(200).json({
+      successCount,
+      failureCount,
+      results: boardIds.map((id) => ({
+        boardId: id,
+        success: validBoardIds.includes(id),
+      })),
+    });
+  } catch (error) {
+    console.error('❌ Error in bulk leave boards:', error);
+    res.status(500).json({ message: 'Error leaving boards' });
+  }
+};
+
+export const bulkDeleteBoards = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { boardIds } = req.body as { boardIds: string[] };
+
+    if (!Array.isArray(boardIds) || boardIds.length === 0) {
+      res.status(400).json({ message: 'boardIds must be a non-empty array' });
+      return;
+    }
+
+    // Validate user is admin for all boards
+    const boards = await prisma.board.findMany({
+      where: { id: { in: boardIds } },
+      select: { id: true, code: true, createdBy: true },
+    });
+
+    const memberships = await prisma.boardMembership.findMany({
+      where: {
+        userId: req.user.id,
+        boardId: { in: boardIds },
+      },
+    });
+
+    const validBoardIds: string[] = [];
+    const boardMap = new Map(boards.map((b) => [b.id, b]));
+    const membershipMap = new Map(memberships.map((m) => [m.boardId, m]));
+
+    for (const boardId of boardIds) {
+      const board = boardMap.get(boardId);
+      const membership = membershipMap.get(boardId);
+
+      if (!board) continue;
+
+      // Allow deletion if user has any membership (ACTIVE or LEFT) in the board
+      if (membership) {
+        validBoardIds.push(boardId);
+      }
+    }
+
+    if (validBoardIds.length === 0) {
+      res.status(200).json({ successCount: 0, failureCount: boardIds.length, results: [] });
+      return;
+    }
+
+    // Delete all in a single transaction
+    await prisma.$transaction(
+      validBoardIds.flatMap((boardId) => [
+        prisma.comment.deleteMany({ where: { boardId } }),
+        prisma.boardMembership.deleteMany({ where: { boardId } }),
+        prisma.board.delete({ where: { id: boardId } }),
+      ])
+    );
+
+    // Emit socket events for each deleted board
+    const io = getIO();
+    validBoardIds.forEach((boardId) => {
+      const board = boardMap.get(boardId);
+      if (board) {
+        try {
+          io.to(board.code).emit('board-deleted', {
+            boardCode: board.code,
+          });
+        } catch (socketError) {
+          console.warn('Socket error emitting board-deleted', socketError);
+        }
+      }
+    });
+
+    const successCount = validBoardIds.length;
+    const failureCount = boardIds.length - successCount;
+
+    res.status(200).json({
+      successCount,
+      failureCount,
+      results: boardIds.map((id) => ({
+        boardId: id,
+        success: validBoardIds.includes(id),
+      })),
+    });
+  } catch (error) {
+    console.error('❌ Error in bulk delete boards:', error);
+    res.status(500).json({ message: 'Error deleting boards' });
   }
 };

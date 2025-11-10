@@ -66,7 +66,11 @@ type BoardDetails = {
   isCreator: boolean;
 };
 
-type ModalState = { type: "leave"; board: { id: string; code: string; name: string } } | null;
+type ModalState =
+  | { type: "leave"; board: { id: string; code: string; name: string } }
+  | { type: "bulk-leave"; boardIds: string[]; boardNames: string[] }
+  | { type: "bulk-delete"; boardIds: string[]; boardNames: string[] }
+  | null;
 
 const parseJSON = <T,>(value: string | null, fallback: T): T => {
   if (!value) return fallback;
@@ -99,6 +103,9 @@ const debounce = <T extends (...args: any[]) => void>(fn: T, delay: number) => {
   };
 };
 
+const isRealtimeMessagingEnabled = () =>
+  (import.meta.env.VITE_RTM_ENABLED === "true") || localStorage.getItem("tb.rtm") === "1";
+
 const normalizeMessage = (message: ChatMessage) => {
   const createdAtValue = message.createdAt
     ? new Date(message.createdAt).toISOString()
@@ -114,7 +121,19 @@ const mergeMessages = (existing: ChatMessage[], incoming: ChatMessage[]) => {
   const keyFor = (message: ChatMessage) =>
     message.id ?? message.clientMessageId ?? `${message.createdAt}-${message.message}`;
   existing.forEach((message) => map.set(keyFor(message), message));
-  incoming.forEach((message) => map.set(keyFor(message), message));
+  incoming.forEach((message) => {
+    const key = keyFor(message);
+    if (map.has(key)) {
+      const existingMessage = map.get(key)!;
+      map.set(key, {
+        ...existingMessage,
+        ...message,
+        status: existingMessage.status ?? message.status,
+      });
+    } else {
+      map.set(key, message);
+    }
+  });
   return Array.from(map.values()).sort(
     (a, b) =>
       new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime()
@@ -126,7 +145,7 @@ const mapServerMessage = (
   fallbackCode?: string
 ): ChatMessage & { boardCode?: string } => ({
   id: payload.id ?? undefined,
-  clientMessageId: payload.clientMessageId ?? undefined,
+  clientMessageId: payload.clientMessageId ?? payload.clientId ?? undefined,
   boardCode: payload.boardCode ?? fallbackCode,
   sender: payload.sender ?? "Unknown",
   actualSender: payload.actualSender ?? undefined,
@@ -227,11 +246,40 @@ export default function BoardRoomPage() {
   useEffect(() => {
     // Initialize socket connection immediately
     initRealtimeService();
-    setSocketConnected(getSocketConnectionState());
+    const initialConnected = getSocketConnectionState();
+    setSocketConnected(initialConnected);
+    
+    // Log initial connection state
+    if (initialConnected) {
+      console.log("[rt] ✅ Socket connected on mount");
+    } else {
+      console.warn("[rt] ⚠️ Socket not connected on mount - will retry");
+      // Retry connection after a short delay
+      const retryTimeout = setTimeout(() => {
+        const retryConnected = getSocketConnectionState();
+        if (!retryConnected) {
+          console.warn("[rt] ⚠️ Socket still not connected after retry");
+          // Try to manually connect if socket is available
+          if (typeof window !== "undefined" && (window as any).__socket__) {
+            (window as any).__socket__.connect();
+          }
+        } else {
+          console.log("[rt] ✅ Socket connected after retry");
+          setSocketConnected(true);
+        }
+      }, 2000);
+      
+      return () => clearTimeout(retryTimeout);
+    }
     
     // Monitor socket connection state
     const cleanup = onConnectionChange((connected) => {
       setSocketConnected(connected);
+      if (connected) {
+        console.log("[rt] ✅ Socket connection restored");
+      } else {
+        console.warn("[rt] ⚠️ Socket connection lost");
+      }
       // Rejoin room when connection is restored (handled in separate effect)
     });
     
@@ -962,14 +1010,24 @@ export default function BoardRoomPage() {
   }, [boardDetails?.code, boardDetails?.id, fetchDeltaForBoard, readOnly]);
 
   useEffect(() => {
+    console.log("[rt] 🔵 useEffect for socket listeners is running", {
+      activeBoardCode,
+      hasBoardDetails: !!boardDetails,
+      timestamp: new Date().toISOString(),
+    });
+    
     const handleReceiveMessage = (payload: any) => {
+      console.log("[rt] 📩 Received message event (receive-message or message:new)", payload);
       const targetCode = payload.boardCode ?? activeBoardCode ?? null;
-      if (!targetCode) return;
+      if (!targetCode) {
+        console.warn("[rt] ⚠️ handleReceiveMessage: No targetCode", { payload, activeBoardCode });
+        return;
+      }
 
       const normalized = normalizeMessage(mapServerMessage(payload, targetCode));
 
+      // Find the board in the current boards state (don't rely on setBoards callback)
       let targetSnapshot: BoardSummary | undefined;
-
       setBoards((prev) => {
         let found = false;
         const next = prev.map((board) => {
@@ -989,6 +1047,7 @@ export default function BoardRoomPage() {
                 ? normalized.actualSender ?? board.lastCommentSenderName
                 : normalized.sender ?? board.lastCommentSenderName,
           };
+          // Set targetSnapshot from the current board, not the updated one
           targetSnapshot = updatedBoard;
           return updatedBoard;
         });
@@ -999,6 +1058,24 @@ export default function BoardRoomPage() {
 
         return sortBoardSummaries(next);
       });
+      
+      // Find board in current state (synchronous lookup)
+      // Use a ref or find it from boards state directly
+      // Actually, we need to find it from the boards state before setBoards
+      // Let's use a different approach - find it from boards state
+      const currentBoard = boards.find(b => b.code === targetCode);
+      targetSnapshot = currentBoard ? {
+        ...currentBoard,
+        lastActivity: normalized.createdAt ?? currentBoard.lastActivity,
+        lastCommentPreview: normalized.message,
+        lastCommentAt: normalized.createdAt ?? currentBoard.lastCommentAt,
+        lastCommentVisibility: normalized.visibility ?? currentBoard.lastCommentVisibility,
+        lastCommentAnonymous: normalized.sender === "Anonymous",
+        lastCommentSenderName:
+          normalized.sender === "Anonymous"
+            ? normalized.actualSender ?? currentBoard.lastCommentSenderName
+            : normalized.sender ?? currentBoard.lastCommentSenderName,
+      } : undefined;
 
       if (!targetSnapshot) {
         return;
@@ -1018,7 +1095,13 @@ export default function BoardRoomPage() {
               pendingMessagesRef.current.delete(normalized.clientMessageId);
             }
             return prev.map((message, idx) =>
-              idx === existingIndex ? { ...normalized } : message
+              idx === existingIndex
+                ? {
+                    ...message,
+                    ...normalized,
+                    status: message.status ?? normalized.status,
+                  }
+                : message
             );
           }
           
@@ -1174,6 +1257,388 @@ export default function BoardRoomPage() {
     socketClient.on("user-joined", handleUserJoined);
     socketClient.on("user-left", handleUserLeft);
 
+    // Store handler references outside function so we can remove them specifically
+    let currentAckHandler: ((payload: any) => void) | null = null;
+    let currentNewHandler: ((payload: any) => void) | null = null;
+
+    // Register RTM listeners (message:new, message:ack) - these must persist across reconnects
+    // IMPORTANT: Check RTM status inside the function, not from closure, so it's always current
+    const registerRTMListeners = () => {
+      console.log("🔵🔵🔵 registerRTMListeners() CALLED - NO PREFIX", new Date().toISOString());
+      console.log("[rt] 🔵 registerRTMListeners() CALLED", new Date().toISOString());
+      const rtmEnabled = isRealtimeMessagingEnabled();
+      
+      // Log RTM status
+      console.log("[rt] RTM Status Check:", {
+        rtmEnabled,
+        envVar: import.meta.env.VITE_RTM_ENABLED,
+        localStorage: localStorage.getItem("tb.rtm"),
+        socketConnected: getSocketConnectionState(),
+        socketId: socketClient.id,
+      });
+      
+      if (!rtmEnabled) {
+        console.warn("[rt] ⚠️ RTM is disabled - listeners not registered", {
+          envVar: import.meta.env.VITE_RTM_ENABLED,
+          localStorage: localStorage.getItem("tb.rtm"),
+        });
+        return;
+      }
+
+      // Remove only our specific handlers (if they exist) to avoid removing test listeners
+      const targetSocket = (typeof window !== 'undefined' && (window as any).__socket__) 
+        ? (window as any).__socket__ 
+        : socketClient;
+      
+      if (currentAckHandler) {
+        targetSocket.off("message:ack", currentAckHandler);
+        if (targetSocket !== socketClient) {
+          socketClient.off("message:ack", currentAckHandler);
+        }
+        console.log("[rt] 🔵 Removed previous ACK handler");
+      }
+      if (currentNewHandler) {
+        targetSocket.off("message:new", currentNewHandler);
+        if (targetSocket !== socketClient) {
+          socketClient.off("message:new", currentNewHandler);
+        }
+        console.log("[rt] 🔵 Removed previous NEW handler");
+      }
+
+      const handleMessageNew = (payload: any) => {
+        console.log("[rt] 📩 Received message:new - HANDLER CALLED", payload);
+        try {
+          handleReceiveMessage(payload);
+        } catch (error) {
+          console.error("[rt] ❌ Error in handleMessageNew:", error);
+        }
+      };
+
+      const handleMessageAck = (payload: { boardCode?: string; clientId?: string; id: string; createdAt?: string }) => {
+        // Use multiple log methods to ensure we see it
+        console.log("🔴🔴🔴 ACK HANDLER CALLED - NO PREFIX");
+        console.log("[rt] 📨 Received message:ack - HANDLER CALLED", payload, {
+          socketId: socketClient.id,
+          socketConnected: socketClient.connected,
+        });
+        console.warn("⚠️⚠️⚠️ ACK HANDLER CALLED - WARNING LEVEL");
+        const targetCode = payload.boardCode ?? activeBoardCode ?? null;
+        if (!targetCode) {
+          console.warn("[rt] ⚠️ message:ack: No targetCode", { payload, activeBoardCode });
+          return;
+        }
+
+        console.log("[rt] ✅ Processing message:ack for board:", targetCode, "clientId:", payload.clientId);
+
+        setMessages((prev) => {
+          const idx = prev.findIndex((msg) => {
+            const matchesClientId = !!payload.clientId && msg.clientMessageId === payload.clientId;
+            const matchesId = msg.id === payload.id;
+            return matchesClientId || matchesId;
+          });
+          
+          if (idx < 0) {
+            // Message not found - might have been removed or not added yet
+            return prev;
+          }
+
+          // Create a completely new array and new message object to ensure React detects the change
+          const next = prev.map((msg, i) => {
+            if (i === idx) {
+              // This is the message we're updating
+              return {
+                ...msg,
+                id: payload.id,
+                status: "sent" as const,
+                createdAt: payload.createdAt ?? msg.createdAt,
+              };
+            }
+            return msg;
+          });
+          
+          return next;
+        });
+
+        if (payload.clientId) {
+          pendingMessagesRef.current.delete(payload.clientId);
+        }
+
+        if (payload.createdAt) {
+          updateLastReceived(targetCode, payload.createdAt);
+        }
+      };
+
+      console.log("[rt] 🔵 About to register handlers on socket", {
+        socketId: socketClient.id,
+        socketConnected: socketClient.connected,
+      });
+      
+      // Store handlers in window for debugging and manual testing
+      if (typeof window !== 'undefined') {
+        // Wrap handlers to add error handling and logging
+        const wrappedMessageAck = (payload: any) => {
+          try {
+            handleMessageAck(payload);
+          } catch (error) {
+            console.error("❌ Handler error:", error);
+          }
+        };
+        
+        const wrappedMessageNew = (payload: any) => {
+          console.log("🔴 WRAPPED HANDLER NEW CALLED", payload);
+          try {
+            handleMessageNew(payload);
+          } catch (error) {
+            console.error("❌ Handler error:", error);
+          }
+        };
+        
+        (window as any).__rtmHandlers = {
+          messageNew: wrappedMessageNew,
+          messageAck: wrappedMessageAck,
+          originalNew: handleMessageNew,
+          originalAck: handleMessageAck,
+        };
+        console.log("[rt] 🔵 Handlers stored in window.__rtmHandlers (wrapped with error handling)", {
+          hasMessageAck: !!(window as any).__rtmHandlers?.messageAck,
+          hasMessageNew: !!(window as any).__rtmHandlers?.messageNew,
+          ackType: typeof (window as any).__rtmHandlers?.messageAck,
+        });
+        
+        // Also expose a test function to manually trigger handlers
+        // Fixed TypeScript types: eventType: string, payload: any
+        (window as any).__testRTMHandlers = (eventType: string, payload: any) => {
+          console.log("🧪 TEST: Manually calling handler for", eventType, payload);
+          if (eventType === 'message:ack') {
+            // Use wrapped handler if available
+            const handler = (window as any).__rtmHandlers?.messageAck || handleMessageAck;
+            handler(payload);
+          } else if (eventType === 'message:new') {
+            handleMessageNew(payload);
+          }
+        };
+        console.log("[rt] 🔵 Test function available: window.__testRTMHandlers('message:ack', payload)");
+      }
+      
+      // CRITICAL: Store handler references to verify they're actually registered
+      const registeredHandlers = {
+        messageNew: handleMessageNew,
+        messageAck: handleMessageAck,
+      };
+      
+      console.log("[rt] 🔵 Registering handlers on socket", {
+        socketId: socketClient.id,
+        socketConnected: socketClient.connected,
+        handlerRefs: registeredHandlers,
+      });
+      
+      // CRITICAL: Verify socketClient is the same as window.__socket__
+      const isSameSocket = socketClient === (typeof window !== 'undefined' ? (window as any).__socket__ : null);
+      console.log("[rt] 🔵 Socket instance check", {
+        socketClientId: socketClient.id,
+        windowSocketId: (typeof window !== 'undefined' && (window as any).__socket__) ? (window as any).__socket__.id : 'N/A',
+        isSameInstance: isSameSocket,
+      });
+      
+      // targetSocket is already defined above, reuse it
+      console.log("[rt] 🔵 Registering handlers", {
+        usingWindowSocket: targetSocket === (window as any).__socket__,
+        socketId: targetSocket.id,
+        socketConnected: targetSocket.connected,
+        isSameAsSocketClient: targetSocket === socketClient,
+      });
+      
+      // Use wrapped handlers if available (they have better error handling)
+      const ackHandler = (typeof window !== 'undefined' && (window as any).__rtmHandlers?.messageAck) 
+        ? (window as any).__rtmHandlers.messageAck 
+        : handleMessageAck;
+      const newHandler = (typeof window !== 'undefined' && (window as any).__rtmHandlers?.messageNew) 
+        ? (window as any).__rtmHandlers.messageNew 
+        : handleMessageNew;
+      
+      // CRITICAL: Remove only our specific handlers, not all handlers
+      // Use a named function reference so we can remove it later if needed
+      // But for now, just add - don't remove (to avoid removing test listeners)
+      
+      // Store handler references for later removal
+      currentAckHandler = ackHandler;
+      currentNewHandler = newHandler;
+      
+      // CRITICAL: The test listener works, but the app handler doesn't get called by socket
+      // Solution: Make the test listener BE the app handler registration
+      // Since test listener works, use it as the primary handler
+      const primaryAckHandler = (payload: any) => {
+        try {
+          ackHandler(payload);
+        } catch (error) {
+          console.error("❌ Error in primary ACK handler:", error);
+        }
+      };
+      
+      // Create primary handler for message:new (same pattern as ACK)
+      const primaryNewHandler = (payload: any) => {
+        try {
+          newHandler(payload);
+        } catch (error) {
+          console.error("❌ Error in primary NEW handler:", error);
+        }
+      };
+      
+      // Register the primary handlers (these work!)
+      targetSocket.on("message:new", primaryNewHandler);
+      targetSocket.on("message:ack", primaryAckHandler);
+      
+      // Store primary handlers for cleanup
+      currentNewHandler = primaryNewHandler;
+      
+      console.log("[rt] 🔵 Primary handlers registered", {
+        targetSocketId: targetSocket.id,
+        ackHandlerType: typeof primaryAckHandler,
+        newHandlerType: typeof newHandler,
+      });
+      
+      // Store the primary handler so we can remove it later
+      currentAckHandler = primaryAckHandler;
+      
+      // Verify handlers are actually registered
+      const socketListeners = (targetSocket as any)._events || (targetSocket as any).listeners?.("message:ack");
+      console.log("[rt] 🔵 Primary handlers registered and verified", {
+        targetSocketId: targetSocket.id,
+        primaryAckHandlerType: typeof primaryAckHandler,
+        newHandlerType: typeof newHandler,
+        storedReferences: { ack: !!currentAckHandler, new: !!currentNewHandler },
+        socketHasListeners: !!socketListeners,
+        listenerCount: Array.isArray(socketListeners) ? socketListeners.length : (socketListeners ? 1 : 0),
+      });
+      
+      // Expose function to check listeners
+      if (typeof window !== 'undefined') {
+        (window as any).__checkSocketListeners = () => {
+          console.log("🔍 Checking socket listeners...");
+          const s = targetSocket;
+          console.log("Socket ID:", s.id);
+          console.log("Socket connected:", s.connected);
+          console.log("Socket events:", (s as any)._events);
+          console.log("message:ack listeners:", (s as any).listeners?.("message:ack") || (s as any)._events?.["message:ack"]);
+        };
+      }
+      
+      console.log("[rt] 🔵 Registered handlers on target socket", {
+        usingWrapped: ackHandler !== handleMessageAck,
+        socketId: targetSocket.id,
+      });
+      
+      // Also register on socketClient for compatibility
+      if (targetSocket !== socketClient) {
+        socketClient.on("message:new", newHandler);
+        socketClient.on("message:ack", ackHandler);
+        console.log("[rt] 🔵 Also registered on socketClient for compatibility");
+      }
+      
+      console.log("[rt] ✅ Handlers registered on socket that receives events");
+      
+      // Immediately test if handlers are callable
+      console.log("[rt] 🔵 Testing handlers directly...");
+      try {
+        const testPayload = { boardCode: 'test', clientId: 'test', id: 'test', createdAt: new Date().toISOString() };
+        console.log("[rt] 🔵 Calling handleMessageAck directly with test payload");
+        handleMessageAck(testPayload);
+        console.log("[rt] ✅ Handler is callable");
+      } catch (error) {
+        console.error("[rt] ❌ Handler error:", error);
+      }
+      
+      // Verify handlers are still on socket after a short delay
+      setTimeout(() => {
+        console.log("[rt] 🔵 Verification: Checking if handlers are still registered", {
+          socketId: socketClient.id,
+          socketConnected: socketClient.connected,
+        });
+        // Test by adding another listener to see if events are still flowing
+        const verifyHandler = (data: any) => {
+          console.log("[rt] ✅ VERIFY: Handler still receiving events!", data);
+          socketClient.off("message:ack", verifyHandler);
+        };
+        socketClient.on("message:ack", verifyHandler);
+        console.log("[rt] 🔵 Verification listener added - send a message to test");
+      }, 1000);
+      
+      // Verify handlers are actually on the socket by checking listeners
+      // Note: socket.io doesn't expose hasListeners, so we'll test by emitting a test event
+      console.log("[rt] 🔵 Verification: Handlers should fire on next message:ack or message:new event");
+      
+      // Verify by checking if socket has the listeners
+      console.log("[rt] 🔵 Verifying registration - handlers should fire on next message");
+
+      const isConnected = getSocketConnectionState();
+      console.log("[rt] ✅ RTM listeners registered", {
+        socketConnected: isConnected,
+        socketId: socketClient.id,
+        activeBoardCode,
+        timestamp: new Date().toISOString(),
+      });
+      
+      // Test: Try to manually trigger to see if handlers work
+      console.log("[rt] 🔵 Testing handler registration - handlers should fire on next message");
+    };
+
+    // Register listeners immediately
+    console.log("[rt] 🔵 About to call registerRTMListeners()");
+    registerRTMListeners();
+
+    // Expose manual registration function for debugging
+    if (typeof window !== 'undefined') {
+        const wrappedFunction = () => {
+          console.log("🔴🔴🔴 MANUAL CALL: window.__registerRTMListeners() invoked - NO PREFIX");
+          console.log("🔴 MANUAL CALL: window.__registerRTMListeners() invoked");
+          try {
+            console.log("🔴 About to call registerRTMListeners()");
+            registerRTMListeners();
+            console.log("🔴 MANUAL CALL: registerRTMListeners() completed");
+          } catch (error) {
+            console.error("🔴 MANUAL CALL: Error in registerRTMListeners:", error);
+          }
+        };
+        (window as any).__registerRTMListeners = wrappedFunction;
+        
+        // Expose function to check if handlers are on socket
+        (window as any).__checkRTMHandlers = () => {
+          console.log("🔍 Checking RTM handlers on socket...");
+          const s = socketClient;
+          console.log("Socket ID:", s.id);
+          console.log("Socket connected:", s.connected);
+          console.log("Handlers exist:", !!(window as any).__rtmHandlers);
+          console.log("Test: Add a temporary listener to see if events are received");
+          
+          // Add a one-time test listener
+          const testHandler = (data: any) => {
+            console.log("✅ TEST: Socket received message:ack event!", data);
+            s.off("message:ack", testHandler);
+          };
+          s.on("message:ack", testHandler);
+          console.log("✅ Test listener added - send a message to see if this fires");
+        };
+        
+        console.log("[rt] 🔧 Manual functions available:");
+        console.log("  - window.__registerRTMListeners()");
+        console.log("  - window.__checkRTMHandlers()");
+      }
+
+    // Re-register on reconnect to ensure they persist
+    const handleReconnect = () => {
+      console.log("[rt] 🔄 Socket reconnected, re-registering RTM listeners");
+      registerRTMListeners();
+    };
+
+    const handleConnect = () => {
+      // Also register on initial connect (in case reconnect didn't fire)
+      console.log("[rt] 🔵 Socket connected, registering RTM listeners");
+      registerRTMListeners();
+    };
+
+    socketClient.on("reconnect", handleReconnect);
+    socketClient.on("connect", handleConnect);
+
     return () => {
       socketClient.off("receive-message", handleReceiveMessage);
       socketClient.off("board-activity", handleBoardActivity);
@@ -1182,6 +1647,11 @@ export default function BoardRoomPage() {
       socketClient.off("membership-updated", handleMembershipUpdated);
       socketClient.off("user-joined", handleUserJoined);
       socketClient.off("user-left", handleUserLeft);
+      socketClient.off("reconnect", handleReconnect);
+      socketClient.off("connect", handleConnect);
+      // Remove RTM listeners
+      socketClient.off("message:new");
+      socketClient.off("message:ack");
     };
   }, [activeBoardCode, applyUnread, boardDetails, hiddenBoardIds, loadBoardDetails, navigate, updateBoardSummary, updateLastReceived, user]);
 
@@ -1195,61 +1665,143 @@ export default function BoardRoomPage() {
       setVisibility("EVERYONE");
     }
 
-    const clientMessageId = `client-${Date.now()}`;
-    const toSend: ChatMessage = {
-      id: clientMessageId,
-      clientMessageId,
-      boardCode: boardDetails.code,
-      sender: anonymousMode ? "Anonymous" : user.name,
-      actualSender: user.name,
-      message: trimmed,
-      visibility: effectiveVisibility,
-      createdAt: new Date().toISOString(),
-      senderId: user.id,
-      userId: user.id,
+    const legacySend = async () => {
+      const clientMessageId = `client-${Date.now()}`;
+      const createdAt = new Date().toISOString();
+      const optimistic: ChatMessage = {
+        id: clientMessageId,
+        clientMessageId,
+        boardCode: boardDetails.code,
+        sender: anonymousMode ? "Anonymous" : user.name,
+        actualSender: user.name,
+        message: trimmed,
+        visibility: effectiveVisibility,
+        createdAt,
+        senderId: user.id,
+        userId: user.id,
+      };
+
+      setComposerValue("");
+      pendingMessagesRef.current.add(clientMessageId);
+      setMessages((prev) => [...prev, optimistic]);
+      updateLastReceived(boardDetails.code, createdAt);
+
+      startTransition(() => {
+        updateBoardSummary(boardDetails.code, {
+          lastActivity: createdAt,
+          lastCommentPreview: trimmed,
+          lastCommentAt: createdAt,
+          lastCommentVisibility: effectiveVisibility,
+          lastCommentAnonymous: anonymousMode,
+          lastCommentSenderName: user.name,
+        });
+      });
+
+      const headers = getAuthHeaders();
+      if (!headers) return;
+      try {
+        await realtimeService.handleSend(
+          {
+            content: trimmed,
+            visibility: effectiveVisibility,
+            boardId: boardDetails.id,
+            anonymous: anonymousMode,
+            clientMessageId,
+          },
+          headers
+        );
+      } catch (error: any) {
+        pendingMessagesRef.current.delete(clientMessageId);
+        if (error?.response?.status === 401) {
+          handleAuthFailure();
+          return;
+        }
+        console.error("Failed to send message", error);
+      }
     };
 
-    // Clear composer IMMEDIATELY (synchronously, before any async operations)
-    setComposerValue("");
-    
-    // Add optimistic message instantly
-    pendingMessagesRef.current.add(clientMessageId);
-    setMessages((prev) => [...prev, toSend]);
-    updateLastReceived(boardDetails.code, toSend.createdAt);
+    const realtimeSend = async () => {
+      const clientMessageId =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `client-${Date.now()}`;
+      const createdAt = new Date().toISOString();
+      const optimistic: ChatMessage = {
+        id: clientMessageId,
+        clientMessageId,
+        boardCode: boardDetails.code,
+        sender: anonymousMode ? "Anonymous" : user.name,
+        actualSender: user.name,
+        message: trimmed,
+        visibility: effectiveVisibility,
+        createdAt,
+        senderId: user.id,
+        userId: user.id,
+        status: "sending",
+      };
 
-    // Use startTransition for non-urgent board summary update
-    startTransition(() => {
-      updateBoardSummary(boardDetails.code, {
-        lastActivity: toSend.createdAt ?? new Date().toISOString(),
-        lastCommentPreview: trimmed,
-        lastCommentAt: toSend.createdAt ?? new Date().toISOString(),
-        lastCommentVisibility: effectiveVisibility,
-        lastCommentAnonymous: anonymousMode,
-        lastCommentSenderName: anonymousMode ? user.name : user.name,
+      setComposerValue("");
+      pendingMessagesRef.current.add(clientMessageId);
+      setMessages((prev) => [...prev, optimistic]);
+      updateLastReceived(boardDetails.code, createdAt);
+
+      startTransition(() => {
+        updateBoardSummary(boardDetails.code, {
+          lastActivity: createdAt,
+          lastCommentPreview: trimmed,
+          lastCommentAt: createdAt,
+          lastCommentVisibility: effectiveVisibility,
+          lastCommentAnonymous: anonymousMode,
+          lastCommentSenderName: user.name,
+        });
       });
-    });
 
-    const headers = getAuthHeaders();
-    if (!headers) return;
-    try {
-      await realtimeService.handleSend(
-        {
-          content: trimmed,
-          visibility: effectiveVisibility,
-          boardId: boardDetails.id,
-          anonymous: anonymousMode,
-          clientMessageId,
-        },
-        headers
-      );
-    } catch (error: any) {
-      if (error?.response?.status === 401) {
-        handleAuthFailure();
-        return;
+      const headers = getAuthHeaders();
+      if (!headers) return;
+      try {
+        await realtimeService.handleSend(
+          {
+            content: trimmed,
+            visibility: effectiveVisibility,
+            boardId: boardDetails.id,
+            anonymous: anonymousMode,
+            clientMessageId,
+          },
+          headers
+        );
+      } catch (error: any) {
+        pendingMessagesRef.current.delete(clientMessageId);
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.clientMessageId === clientMessageId ? { ...message, status: "failed" } : message
+          )
+        );
+        if (error?.response?.status === 401) {
+          handleAuthFailure();
+          return;
+        }
+        console.error("Failed to send message", error);
       }
-      console.error("Failed to send message", error);
+    };
+
+    if (!isRealtimeMessagingEnabled()) {
+      await legacySend();
+      return;
     }
-  }, [anonymousMode, boardDetails, composerValue, getAuthHeaders, handleAuthFailure, isAdmin, updateBoardSummary, updateLastReceived, user, visibility]);
+
+    await realtimeSend();
+  }, [
+    anonymousMode,
+    boardDetails,
+    composerValue,
+    getAuthHeaders,
+    handleAuthFailure,
+    isAdmin,
+    updateBoardSummary,
+    updateLastReceived,
+    user,
+    visibility,
+  ]);
 
   const handleToggleAnonymous = useCallback(
     async (enabled: boolean) => {
@@ -1299,32 +1851,75 @@ export default function BoardRoomPage() {
     if (!boardDetails?.id || loadingOlderMessages) return;
     setCommentsError(null);
     setLoadingOlderMessages(true);
-    try {
-      // TASK 2.4: For loading older messages, use offset-based pagination (backward compatible)
-      // Get current message count to calculate offset
+    const rtmEnabled = isRealtimeMessagingEnabled();
+
+    const legacyLoad = async () => {
       const currentCount = messages.length;
-      const url = `${BACKEND}/api/comments/${boardDetails.id}?limit=50&offset=${currentCount}`;
+      const headers = getAuthHeaders();
+      if (!headers) return;
+      const response = await axios.get(
+        `${BACKEND}/api/comments/${boardDetails.id}?limit=50&offset=${currentCount}`,
+        { headers }
+      );
+      const responseData = response.data;
+      const history: ChatMessage[] = Array.isArray(responseData) ? responseData : (responseData.comments || []);
+
+      if (history.length === 0) {
+        setHasMoreMessages(false);
+      } else {
+        const hasMore =
+          responseData.hasMore ??
+          (responseData.total ? currentCount + history.length < responseData.total : true);
+        setHasMoreMessages(hasMore);
+      }
+
+      const olderMessages = history.map((message) => ({ ...message, boardCode: boardDetails.code }));
+      setMessages((prev) => [...olderMessages, ...prev]);
+    };
+
+    const realtimeLoad = async () => {
+      if (messages.length === 0) {
+        setHasMoreMessages(false);
+        return;
+      }
+
+      const oldest = messages[0];
+      const referenceCreatedAt = oldest.createdAt
+        ? new Date(oldest.createdAt).toISOString()
+        : new Date().toISOString();
+      const cursorIdValue = oldest.id ?? oldest.clientMessageId ?? "";
+
+      let url = `${BACKEND}/api/comments/${boardDetails.id}?limit=50&before=${encodeURIComponent(
+        referenceCreatedAt
+      )}`;
+      if (cursorIdValue) {
+        url += `&cursorId=${encodeURIComponent(cursorIdValue)}`;
+      }
+
       const headers = getAuthHeaders();
       if (!headers) return;
       const response = await axios.get(url, { headers });
       const responseData = response.data;
       const history: ChatMessage[] = Array.isArray(responseData) ? responseData : (responseData.comments || []);
-      
-      // Check if there are more messages to load
-      if (history.length === 0) {
-        setHasMoreMessages(false);
-      } else {
-        const hasMore = responseData.hasMore ?? (responseData.total ? currentCount + history.length < responseData.total : true);
-        setHasMoreMessages(hasMore);
-      }
-      
-      // Prepend older messages to the beginning
+
+      const hasMore =
+        responseData.hasMore ?? (responseData.total ? history.length > 0 : history.length === 50);
+      setHasMoreMessages(hasMore);
+
       const olderMessages = history.map((message) => ({ ...message, boardCode: boardDetails.code }));
       setMessages((prev) => [...olderMessages, ...prev]);
+    };
+
+    try {
+      if (!rtmEnabled) {
+        await legacyLoad();
+      } else {
+        await realtimeLoad();
+      }
     } finally {
       setLoadingOlderMessages(false);
     }
-  }, [boardDetails, loadComments, loadingOlderMessages, messages.length, getAuthHeaders]);
+  }, [boardDetails, getAuthHeaders, loadingOlderMessages, messages, setCommentsError]);
 
   const handleCreateBoard = useCallback(async () => {
     const name = createBoardName.trim();
@@ -1414,6 +2009,131 @@ export default function BoardRoomPage() {
       setModal(null);
     }
   }, [boardDetails, getAuthHeaders, handleAuthFailure, debouncedLoadBoards, modal, navigate, updateBoardSummary]);
+
+  const handleBulkLeaveBoards = useCallback(
+    (boardIds: string[]) => {
+      const boardNames = boardIds
+        .map((id) => boards.find((b) => b.id === id)?.name)
+        .filter((name): name is string => Boolean(name));
+      setModal({ type: "bulk-leave", boardIds, boardNames });
+    },
+    [boards]
+  );
+
+  const handleBulkDeleteBoards = useCallback(
+    (boardIds: string[]) => {
+      const boardNames = boardIds
+        .map((id) => boards.find((b) => b.id === id)?.name)
+        .filter((name): name is string => Boolean(name));
+      setModal({ type: "bulk-delete", boardIds, boardNames });
+    },
+    [boards]
+  );
+
+  const executeBulkLeaveBoards = useCallback(async () => {
+    if (!modal || modal.type !== "bulk-leave") return;
+    const headers = getAuthHeaders();
+    if (!headers) return;
+    try {
+      const response = await axios.post(
+        `${BACKEND}/api/boards/bulk-leave`,
+        { boardIds: modal.boardIds },
+        { headers }
+      );
+      const { successCount, results } = response.data;
+      
+      // Update local state for successfully left boards
+      results.forEach((result: { boardId: string; success: boolean }) => {
+        if (result.success) {
+          const board = boards.find((b) => b.id === result.boardId);
+          if (board) {
+            updateBoardSummary(board.code, { membershipStatus: "LEFT", readOnly: true });
+            if (boardDetails?.code === board.code) {
+              if (activeRoomRef.current === board.code) {
+                activeRoomRef.current = null;
+              }
+              delete lastReceivedRef.current[board.code];
+              delete lastDeltaRunRef.current[board.code];
+              realtimeService.clearRoom();
+              setBoardDetails((prev) =>
+                prev ? { ...prev, membershipStatus: "LEFT", readOnly: true } : prev
+              );
+              navigate("/app");
+            }
+          }
+        }
+      });
+
+      debouncedLoadBoards();
+      if (successCount < modal.boardIds.length) {
+        console.warn(`Only ${successCount} of ${modal.boardIds.length} boards were left`);
+      }
+    } catch (error: any) {
+      if (error?.response?.status === 401) {
+        handleAuthFailure();
+        return;
+      }
+      console.error("Failed to leave boards", error);
+    } finally {
+      setModal(null);
+    }
+  }, [boardDetails, getAuthHeaders, handleAuthFailure, debouncedLoadBoards, modal, navigate, updateBoardSummary, boards]);
+
+  const executeBulkDeleteBoards = useCallback(async () => {
+    if (!modal || modal.type !== "bulk-delete") return;
+    const headers = getAuthHeaders();
+    if (!headers) return;
+    try {
+      const response = await axios.post(
+        `${BACKEND}/api/boards/bulk-delete`,
+        { boardIds: modal.boardIds },
+        { headers }
+      );
+      const { successCount, results } = response.data;
+      
+      // Remove successfully deleted boards from state
+      const deletedBoardIds = results
+        .filter((result: { boardId: string; success: boolean }) => result.success)
+        .map((result: { boardId: string }) => result.boardId);
+      
+      if (deletedBoardIds.length > 0) {
+        // Get board info before removing from state
+        const deletedBoards = boards.filter((b) => deletedBoardIds.includes(b.id));
+        
+        // Remove boards from state immediately
+        setBoards((prev) => prev.filter((board) => !deletedBoardIds.includes(board.id)));
+        
+        // Clean up state for deleted boards
+        deletedBoards.forEach((board) => {
+          applyUnread(board.code, () => 0);
+          if (boardDetails?.code === board.code) {
+            if (activeRoomRef.current === board.code) {
+              activeRoomRef.current = null;
+            }
+            delete lastReceivedRef.current[board.code];
+            delete lastDeltaRunRef.current[board.code];
+            realtimeService.clearRoom();
+            setRightPanelOpen(false);
+            navigate("/app");
+          }
+        });
+      }
+
+      // Reload boards list to ensure consistency (but state update above ensures immediate removal)
+      debouncedLoadBoards();
+      if (successCount < modal.boardIds.length) {
+        console.warn(`Only ${successCount} of ${modal.boardIds.length} boards were deleted`);
+      }
+    } catch (error: any) {
+      if (error?.response?.status === 401) {
+        handleAuthFailure();
+        return;
+      }
+      console.error("Failed to delete boards", error);
+    } finally {
+      setModal(null);
+    }
+  }, [boardDetails, getAuthHeaders, handleAuthFailure, debouncedLoadBoards, modal, navigate, updateBoardSummary, boards, setHiddenBoardIds, applyUnread, setRightPanelOpen]);
 
   const handleHideBoard = useCallback(
     (board: { id: string; code: string; name: string }) => {
@@ -1648,6 +2368,8 @@ export default function BoardRoomPage() {
     unreadByBoard,
     showFooterActions: Boolean(boardDetails?.code),
     onPrefetchBoard: prefetchBoard,
+    onBulkLeaveBoards: handleBulkLeaveBoards,
+    onBulkDeleteBoards: handleBulkDeleteBoards,
   } as const;
 
   return (
@@ -1689,7 +2411,14 @@ export default function BoardRoomPage() {
             ) : (
               <MessageList
                 key={boardDetails.code}
-                messages={messages.map(normalizeMessage)}
+                messages={messages.map((msg) => {
+                  const normalized = normalizeMessage(msg);
+                  // Debug: log if status is "sending" to see if it's being preserved
+                  if (msg.status === "sending" || msg.status === "sent") {
+                    console.log(`[rt] Message status in render: ${msg.id || msg.clientMessageId} = ${msg.status}`);
+                  }
+                  return normalized;
+                })}
                 isAdmin={isAdmin}
                 currentUserId={user?.id}
                 currentUserName={user?.name}
@@ -1805,6 +2534,47 @@ export default function BoardRoomPage() {
         onConfirm={handleLeaveBoard}
         onCancel={() => setModal(null)}
       />
+      {modal?.type === "bulk-leave" ? (
+        <ConfirmModal
+          open={true}
+          title={`Leave ${modal.boardNames.length} ${modal.boardNames.length === 1 ? "board" : "boards"}?`}
+          description={
+            <div>
+              <p className="mb-2">You won't receive new messages after leaving, but you can still read past history.</p>
+              <p className="text-sm font-medium">Boards:</p>
+              <ul className="mt-1 max-h-40 list-disc list-inside space-y-1 overflow-y-auto text-sm text-slate-600">
+                {modal.boardNames.map((name) => (
+                  <li key={name}>{name}</li>
+                ))}
+              </ul>
+            </div>
+          }
+          confirmLabel={`Leave ${modal.boardNames.length} ${modal.boardNames.length === 1 ? "board" : "boards"}`}
+          onConfirm={executeBulkLeaveBoards}
+          onCancel={() => setModal(null)}
+        />
+      ) : null}
+      {modal?.type === "bulk-delete" ? (
+        <ConfirmModal
+          open={true}
+          title={`Delete ${modal.boardNames.length} ${modal.boardNames.length === 1 ? "board" : "boards"}?`}
+          description={
+            <div>
+              <p className="mb-2 text-red-600">This action cannot be undone. All messages and members will be permanently removed.</p>
+              <p className="text-sm font-medium">Boards:</p>
+              <ul className="mt-1 max-h-40 list-disc list-inside space-y-1 overflow-y-auto text-sm text-slate-600">
+                {modal.boardNames.map((name) => (
+                  <li key={name}>{name}</li>
+                ))}
+              </ul>
+            </div>
+          }
+        confirmLabel={`Delete ${modal?.boardNames.length ?? 0} ${(modal?.boardNames.length ?? 0) === 1 ? "board" : "boards"}`}
+          confirmVariant="danger"
+          onConfirm={executeBulkDeleteBoards}
+          onCancel={() => setModal(null)}
+        />
+      ) : null}
 
       <InputDialog
         title="Create a board"

@@ -69,11 +69,15 @@ model Comment {
   boardId     String
   anonymous   Boolean    @default(false)
   createdAt   DateTime   @default(now())
+  // Optional client-generated UUID for idempotency and optimistic sends
+  clientId    String?
 
   createdBy User  @relation(fields: [createdById], references: [id])
   board     Board @relation(fields: [boardId], references: [id])
 
   @@index([boardId, createdAt], map: "idx_comment_board_created")
+  @@index([boardId, createdAt, id], map: "idx_comment_board_created_id")
+  @@unique([boardId, clientId], map: "uq_comment_board_client_id")
   @@index([createdById], map: "idx_comment_created_by")
   @@index([boardId, visibility, createdAt], map: "idx_comment_board_visibility_created")
 }
