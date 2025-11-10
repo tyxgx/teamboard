@@ -894,11 +894,8 @@ export default function BoardRoomPage() {
     }
   }, [boardCode, user?.name]);
 
-  useEffect(() => {
-    if (!isAdmin && visibility === "ADMIN_ONLY") {
-      setVisibility("EVERYONE");
-    }
-  }, [isAdmin, visibility]);
+  // Remove this useEffect - members should be able to use admin-only feature
+  // Only admins should not see the button (handled in ChatComposer)
 
   useEffect(() => {
     const code = boardDetails?.code ?? null;
