@@ -1283,8 +1283,16 @@ export default function BoardRoomPage() {
       }
 
       const handleMessageNew = (payload: any) => {
+        alert("MESSAGE:NEW HANDLER CALLED!");
         console.log("[rt] 📩 Received message:new - HANDLER CALLED", payload);
-        handleReceiveMessage(payload);
+        console.log("[rt] 📩 About to call handleReceiveMessage with payload:", payload);
+        try {
+          handleReceiveMessage(payload);
+          console.log("[rt] 📩 handleReceiveMessage completed");
+        } catch (error) {
+          console.error("[rt] ❌ Error in handleMessageNew:", error);
+          alert("Error in handleMessageNew: " + error);
+        }
       };
 
       const handleMessageAck = (payload: { boardCode?: string; clientId?: string; id: string; createdAt?: string }) => {
@@ -1471,9 +1479,26 @@ export default function BoardRoomPage() {
         }
       };
       
-      // Register the primary handler (this one works!)
-      targetSocket.on("message:new", newHandler);
+      // Create primary handler for message:new (same pattern as ACK)
+      const primaryNewHandler = (payload: any) => {
+        alert("PRIMARY MESSAGE:NEW HANDLER CALLED!");
+        console.log("🔵🔵🔵 PRIMARY MESSAGE:NEW HANDLER CALLED BY SOCKET", payload);
+        try {
+          console.log("🔵 About to call newHandler with payload:", payload);
+          newHandler(payload);
+          console.log("🔵 newHandler completed");
+        } catch (error) {
+          console.error("❌ Error in primary NEW handler:", error);
+          alert("Error: " + error);
+        }
+      };
+      
+      // Register the primary handlers (these work!)
+      targetSocket.on("message:new", primaryNewHandler);
       targetSocket.on("message:ack", primaryAckHandler);
+      
+      // Store primary handlers for cleanup
+      currentNewHandler = primaryNewHandler;
       
       console.log("[rt] 🔵 Primary handlers registered", {
         targetSocketId: targetSocket.id,
