@@ -247,7 +247,7 @@ export const MessageList = ({
     const createdAt = msg.createdAt ?? new Date().toISOString();
 
     return (
-      <div style={style} className="flex flex-col gap-3">
+      <div style={style} className="flex flex-col gap-1">
         <MessageBubble
           key={item.key}
           isOwn={isOwn}
@@ -316,7 +316,7 @@ export const MessageList = ({
           style={{ scrollBehavior: "smooth" }}
         >
           <div ref={topSentinelRef} />
-          <div className="mx-auto flex max-w-3xl flex-col gap-4">
+          <div className="flex flex-col gap-1">
             {/* Loading indicator for older messages */}
             {(isLoadingOlder || isLoadingOlderState) && messages.length > 0 && hasMoreMessages !== false ? (
               <div className="flex justify-center py-2">
@@ -387,9 +387,12 @@ export const MessageList = ({
                         >
                           <span>{msg.message}</span>
                           {msg.status === "sending" ? (
-                            <span className="ml-2 align-middle text-[10px] text-slate-400">sending…</span>
+                            <span className="ml-2 inline-flex items-center text-[11px] opacity-60">
+                              <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>
+                              sending
+                            </span>
                           ) : msg.status === "sent" ? (
-                            <span className="ml-2 align-middle text-[10px] text-slate-300">✓</span>
+                            <span className="ml-2 inline-flex items-center text-[11px] opacity-70">✓</span>
                           ) : null}
                           {msg.status === "failed" ? (
                             <span className="ml-2 align-middle text-[10px] text-red-500">failed</span>
