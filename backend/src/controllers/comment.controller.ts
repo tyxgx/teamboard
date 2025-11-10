@@ -385,12 +385,27 @@ async function realtimeCreateComment(req: Request, res: Response) {
 
     // Always emit ack so clients can reconcile optimistic messages
     try {
-      io.to(room).emit('message:ack', {
+      const roomSockets = await io.in(room).fetchSockets();
+      const ackPayload = {
         boardCode: room,
         clientId: clientId ?? null,
         id: comment.id,
         createdAt: comment.createdAt.toISOString(),
-      });
+      };
+      
+      if (process.env.NODE_ENV !== 'production' || process.env.RTM_ENABLED === 'true') {
+        console.log(`[rtm] Emitting message:ack to room "${room}" (${roomSockets.length} clients)`, {
+          clientId: clientId ?? null,
+          messageId: comment.id,
+        });
+      }
+      
+      io.to(room).emit('message:ack', ackPayload);
+      
+      // Also emit to sender's socket directly if they're connected
+      if (roomSockets.length === 0 && process.env.NODE_ENV !== 'production') {
+        console.warn(`[rtm] ⚠️ No clients in room "${room}" to receive message:ack`);
+      }
     } catch (error) {
       console.error('❌ Socket ACK emit error:', error);
     }
