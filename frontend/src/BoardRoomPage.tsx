@@ -1304,49 +1304,26 @@ export default function BoardRoomPage() {
         console.log("[rt] ✅ Processing message:ack for board:", targetCode, "clientId:", payload.clientId);
 
         setMessages((prev) => {
-          console.log("[rt] 🔍 Searching for message in list", {
-            searchClientId: payload.clientId,
-            searchId: payload.id,
-            messageCount: prev.length,
-            allMessages: prev.map(m => ({ 
-              id: m.id, 
-              clientMessageId: m.clientMessageId, 
-              status: m.status,
-              message: m.message?.substring(0, 30),
-            })),
-          });
+          // Use alerts to debug since console isn't showing
+          const messageCount = prev.length;
+          const allClientIds = prev.map(m => m.clientMessageId).filter(Boolean);
+          const allIds = prev.map(m => m.id).filter(Boolean);
+          
+          alert(`Searching: clientId=${payload.clientId}, id=${payload.id}, messages=${messageCount}`);
           
           const idx = prev.findIndex((msg) => {
             const matchesClientId = !!payload.clientId && msg.clientMessageId === payload.clientId;
             const matchesId = msg.id === payload.id;
             const matches = matchesClientId || matchesId;
-            if (matches) {
-              console.log("[rt] 🔍 Match found!", { 
-                msgClientId: msg.clientMessageId, 
-                msgId: msg.id,
-                payloadClientId: payload.clientId,
-                payloadId: payload.id,
-                matchType: matchesClientId ? 'clientId' : 'id'
-              });
-            }
             return matches;
           });
           
           if (idx < 0) {
-            console.warn("[rt] ⚠️ message:ack: Message not found in list", { 
-              clientId: payload.clientId, 
-              id: payload.id, 
-              messageCount: prev.length,
-              allClientIds: prev.map(m => m.clientMessageId).filter(Boolean),
-              allIds: prev.map(m => m.id).filter(Boolean),
-            });
+            alert(`NOT FOUND! clientId=${payload.clientId}, id=${payload.id}\nMessages: ${messageCount}\nClientIds: ${allClientIds.join(', ')}\nIds: ${allIds.join(', ')}`);
             return prev;
           }
 
-          console.log("[rt] ✅ Found message at index", idx, "updating status to 'sent'", {
-            before: { id: prev[idx].id, clientMessageId: prev[idx].clientMessageId, status: prev[idx].status },
-            after: { id: payload.id, status: "sent" },
-          });
+          alert(`FOUND at index ${idx}! Updating status to 'sent'`);
           
           const next = [...prev];
           next[idx] = {
@@ -1356,7 +1333,7 @@ export default function BoardRoomPage() {
             createdAt: payload.createdAt ?? next[idx].createdAt,
           };
           
-          console.log("[rt] ✅ Message updated in state", next[idx]);
+          alert(`Updated! New status: ${next[idx].status}, id: ${next[idx].id}`);
           return next;
         });
 
