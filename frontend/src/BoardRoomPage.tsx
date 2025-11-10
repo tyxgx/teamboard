@@ -1026,8 +1026,8 @@ export default function BoardRoomPage() {
       const normalized = normalizeMessage(mapServerMessage(payload, targetCode));
       alert(`Normalized message: id=${normalized.id}, clientId=${normalized.clientMessageId}, message=${normalized.message?.substring(0, 20)}`);
 
+      // Find the board in the current boards state (don't rely on setBoards callback)
       let targetSnapshot: BoardSummary | undefined;
-
       setBoards((prev) => {
         let found = false;
         const next = prev.map((board) => {
@@ -1047,6 +1047,7 @@ export default function BoardRoomPage() {
                 ? normalized.actualSender ?? board.lastCommentSenderName
                 : normalized.sender ?? board.lastCommentSenderName,
           };
+          // Set targetSnapshot from the current board, not the updated one
           targetSnapshot = updatedBoard;
           return updatedBoard;
         });
@@ -1057,11 +1058,29 @@ export default function BoardRoomPage() {
 
         return sortBoardSummaries(next);
       });
+      
+      // Find board in current state (synchronous lookup)
+      // Use a ref or find it from boards state directly
+      // Actually, we need to find it from the boards state before setBoards
+      // Let's use a different approach - find it from boards state
+      const currentBoard = boards.find(b => b.code === targetCode);
+      targetSnapshot = currentBoard ? {
+        ...currentBoard,
+        lastActivity: normalized.createdAt ?? currentBoard.lastActivity,
+        lastCommentPreview: normalized.message,
+        lastCommentAt: normalized.createdAt ?? currentBoard.lastCommentAt,
+        lastCommentVisibility: normalized.visibility ?? currentBoard.lastCommentVisibility,
+        lastCommentAnonymous: normalized.sender === "Anonymous",
+        lastCommentSenderName:
+          normalized.sender === "Anonymous"
+            ? normalized.actualSender ?? currentBoard.lastCommentSenderName
+            : normalized.sender ?? currentBoard.lastCommentSenderName,
+      } : undefined;
 
       alert(`targetSnapshot check: ${targetSnapshot ? `Found! code=${targetSnapshot.code}, activeBoardCode=${activeBoardCode}` : 'NOT FOUND!'}`);
       
       if (!targetSnapshot) {
-        alert(`⚠️ targetSnapshot is undefined! Board not found in boards list. targetCode=${targetCode}`);
+        alert(`⚠️ targetSnapshot is undefined! Board not found in boards list. targetCode=${targetCode}, boards.length=${boards.length}`);
         return;
       }
 
