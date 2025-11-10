@@ -1013,18 +1013,14 @@ export default function BoardRoomPage() {
     });
     
     const handleReceiveMessage = (payload: any) => {
-      alert(`handleReceiveMessage called! boardCode=${payload.boardCode}, activeBoardCode=${activeBoardCode}`);
       console.log("[rt] 📩 Received message event (receive-message or message:new)", payload);
       const targetCode = payload.boardCode ?? activeBoardCode ?? null;
       if (!targetCode) {
-        alert(`⚠️ No targetCode! payload.boardCode=${payload.boardCode}, activeBoardCode=${activeBoardCode}`);
         console.warn("[rt] ⚠️ handleReceiveMessage: No targetCode", { payload, activeBoardCode });
         return;
       }
 
-      alert(`Target code: ${targetCode}, about to normalize message`);
       const normalized = normalizeMessage(mapServerMessage(payload, targetCode));
-      alert(`Normalized message: id=${normalized.id}, clientId=${normalized.clientMessageId}, message=${normalized.message?.substring(0, 20)}`);
 
       // Find the board in the current boards state (don't rely on setBoards callback)
       let targetSnapshot: BoardSummary | undefined;
@@ -1077,29 +1073,19 @@ export default function BoardRoomPage() {
             : normalized.sender ?? currentBoard.lastCommentSenderName,
       } : undefined;
 
-      alert(`targetSnapshot check: ${targetSnapshot ? `Found! code=${targetSnapshot.code}, activeBoardCode=${activeBoardCode}` : 'NOT FOUND!'}`);
-      
       if (!targetSnapshot) {
-        alert(`⚠️ targetSnapshot is undefined! Board not found in boards list. targetCode=${targetCode}, boards.length=${boards.length}`);
         return;
       }
 
-      alert(`targetSnapshot.code=${targetSnapshot.code}, activeBoardCode=${activeBoardCode}, match=${targetSnapshot.code === activeBoardCode}`);
-      
       if (targetSnapshot.code === activeBoardCode) {
-        alert(`Adding message to active board! targetSnapshot.code=${targetSnapshot.code}, activeBoardCode=${activeBoardCode}`);
         setMessages((prev) => {
-          alert(`setMessages callback: prev.length=${prev.length}, normalized.id=${normalized.id}, normalized.clientMessageId=${normalized.clientMessageId}`);
           // Deduplicate messages by ID or clientMessageId
           const existingIndex = prev.findIndex(
             (msg) => msg.id === normalized.id || 
             (normalized.clientMessageId && msg.clientMessageId === normalized.clientMessageId)
           );
           
-          alert(`Existing index: ${existingIndex}`);
-          
           if (existingIndex >= 0) {
-            alert(`Message already exists at index ${existingIndex}, updating it`);
             // Update existing message
             if (normalized.clientMessageId && pendingMessagesRef.current.has(normalized.clientMessageId)) {
               pendingMessagesRef.current.delete(normalized.clientMessageId);
@@ -1115,7 +1101,6 @@ export default function BoardRoomPage() {
             );
           }
           
-          alert(`Adding NEW message! Current count: ${prev.length}, will be ${prev.length + 1}`);
           // Add new message, ensuring proper order by createdAt
           const newMessages = [...prev, normalized].sort(
             (a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime()
@@ -1125,11 +1110,9 @@ export default function BoardRoomPage() {
             pendingMessagesRef.current.delete(normalized.clientMessageId);
           }
           
-          alert(`Returning new messages array with length: ${newMessages.length}`);
           return newMessages;
         });
       } else {
-        alert(`Message is for different board! targetSnapshot.code=${targetSnapshot.code}, activeBoardCode=${activeBoardCode}`);
         if (targetSnapshot.readOnly || hiddenBoardIds.includes(targetSnapshot.id)) {
           return;
         }
@@ -1319,15 +1302,11 @@ export default function BoardRoomPage() {
       }
 
       const handleMessageNew = (payload: any) => {
-        alert("MESSAGE:NEW HANDLER CALLED!");
         console.log("[rt] 📩 Received message:new - HANDLER CALLED", payload);
-        console.log("[rt] 📩 About to call handleReceiveMessage with payload:", payload);
         try {
           handleReceiveMessage(payload);
-          console.log("[rt] 📩 handleReceiveMessage completed");
         } catch (error) {
           console.error("[rt] ❌ Error in handleMessageNew:", error);
-          alert("Error in handleMessageNew: " + error);
         }
       };
 
@@ -1394,19 +1373,10 @@ export default function BoardRoomPage() {
       if (typeof window !== 'undefined') {
         // Wrap handlers to add error handling and logging
         const wrappedMessageAck = (payload: any) => {
-          // Use multiple log methods to ensure visibility
-          alert("WRAPPED ACK HANDLER CALLED!");
-          console.log("🔴🔴🔴 WRAPPED ACK HANDLER CALLED - NO PREFIX");
-          console.warn("⚠️⚠️⚠️ WRAPPED ACK HANDLER - WARNING LEVEL");
-          console.error("❌❌❌ WRAPPED ACK HANDLER - ERROR LEVEL");
-          console.log("🔴 WRAPPED HANDLER CALLED", payload);
           try {
-            console.log("🔴 About to call handleMessageAck...");
             handleMessageAck(payload);
-            console.log("🔴 handleMessageAck completed");
           } catch (error) {
             console.error("❌ Handler error:", error);
-            alert("Handler error: " + error);
           }
         };
         
@@ -1494,38 +1464,19 @@ export default function BoardRoomPage() {
       // Solution: Make the test listener BE the app handler registration
       // Since test listener works, use it as the primary handler
       const primaryAckHandler = (payload: any) => {
-        // This is the handler that actually gets called by the socket
-        console.log("🔴🔴🔴 PRIMARY ACK HANDLER CALLED BY SOCKET", payload);
-        console.log("🔴 Payload details:", {
-          boardCode: payload.boardCode,
-          clientId: payload.clientId,
-          id: payload.id,
-          createdAt: payload.createdAt,
-          payloadKeys: Object.keys(payload),
-        });
-        
         try {
-          // Call the app's handler logic - this will update the state
-          console.log("🔴 About to call ackHandler with payload:", payload);
           ackHandler(payload);
-          console.log("🔴 ackHandler completed");
         } catch (error) {
           console.error("❌ Error in primary ACK handler:", error);
-          alert("Error: " + error);
         }
       };
       
       // Create primary handler for message:new (same pattern as ACK)
       const primaryNewHandler = (payload: any) => {
-        alert("PRIMARY MESSAGE:NEW HANDLER CALLED!");
-        console.log("🔵🔵🔵 PRIMARY MESSAGE:NEW HANDLER CALLED BY SOCKET", payload);
         try {
-          console.log("🔵 About to call newHandler with payload:", payload);
           newHandler(payload);
-          console.log("🔵 newHandler completed");
         } catch (error) {
           console.error("❌ Error in primary NEW handler:", error);
-          alert("Error: " + error);
         }
       };
       
