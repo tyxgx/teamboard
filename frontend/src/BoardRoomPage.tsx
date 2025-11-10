@@ -1304,36 +1304,31 @@ export default function BoardRoomPage() {
         console.log("[rt] ✅ Processing message:ack for board:", targetCode, "clientId:", payload.clientId);
 
         setMessages((prev) => {
-          // Use alerts to debug since console isn't showing
-          const messageCount = prev.length;
-          const allClientIds = prev.map(m => m.clientMessageId).filter(Boolean);
-          const allIds = prev.map(m => m.id).filter(Boolean);
-          
-          alert(`Searching: clientId=${payload.clientId}, id=${payload.id}, messages=${messageCount}`);
-          
           const idx = prev.findIndex((msg) => {
             const matchesClientId = !!payload.clientId && msg.clientMessageId === payload.clientId;
             const matchesId = msg.id === payload.id;
-            const matches = matchesClientId || matchesId;
-            return matches;
+            return matchesClientId || matchesId;
           });
           
           if (idx < 0) {
-            alert(`NOT FOUND! clientId=${payload.clientId}, id=${payload.id}\nMessages: ${messageCount}\nClientIds: ${allClientIds.join(', ')}\nIds: ${allIds.join(', ')}`);
+            // Message not found - might have been removed or not added yet
             return prev;
           }
 
-          alert(`FOUND at index ${idx}! Updating status to 'sent'`);
+          // Create a completely new array and new message object to ensure React detects the change
+          const next = prev.map((msg, i) => {
+            if (i === idx) {
+              // This is the message we're updating
+              return {
+                ...msg,
+                id: payload.id,
+                status: "sent" as const,
+                createdAt: payload.createdAt ?? msg.createdAt,
+              };
+            }
+            return msg;
+          });
           
-          const next = [...prev];
-          next[idx] = {
-            ...next[idx],
-            id: payload.id,
-            status: "sent",
-            createdAt: payload.createdAt ?? next[idx].createdAt,
-          };
-          
-          alert(`Updated! New status: ${next[idx].status}, id: ${next[idx].id}`);
           return next;
         });
 
@@ -2273,7 +2268,14 @@ export default function BoardRoomPage() {
             ) : (
               <MessageList
                 key={boardDetails.code}
-                messages={messages.map(normalizeMessage)}
+                messages={messages.map((msg) => {
+                  const normalized = normalizeMessage(msg);
+                  // Debug: log if status is "sending" to see if it's being preserved
+                  if (msg.status === "sending" || msg.status === "sent") {
+                    console.log(`[rt] Message status in render: ${msg.id || msg.clientMessageId} = ${msg.status}`);
+                  }
+                  return normalized;
+                })}
                 isAdmin={isAdmin}
                 currentUserId={user?.id}
                 currentUserName={user?.name}
