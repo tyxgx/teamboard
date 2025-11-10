@@ -1007,8 +1007,12 @@ export default function BoardRoomPage() {
 
   useEffect(() => {
     const handleReceiveMessage = (payload: any) => {
+      console.log("[rt] 📩 Received message event (receive-message or message:new)", payload);
       const targetCode = payload.boardCode ?? activeBoardCode ?? null;
-      if (!targetCode) return;
+      if (!targetCode) {
+        console.warn("[rt] ⚠️ handleReceiveMessage: No targetCode", { payload, activeBoardCode });
+        return;
+      }
 
       const normalized = normalizeMessage(mapServerMessage(payload, targetCode));
 
@@ -1225,10 +1229,25 @@ export default function BoardRoomPage() {
     socketClient.on("user-left", handleUserLeft);
 
     const rtmEnabled = isRealtimeMessagingEnabled();
+    
+    // Log RTM status
+    console.log("[rt] RTM Status Check:", {
+      rtmEnabled,
+      envVar: import.meta.env.VITE_RTM_ENABLED,
+      localStorage: localStorage.getItem("tb.rtm"),
+      socketConnected: getSocketConnectionState(),
+      socketId: socketClient.id,
+    });
 
     // Register RTM listeners (message:new, message:ack) - these must persist across reconnects
     const registerRTMListeners = () => {
-      if (!rtmEnabled) return;
+      if (!rtmEnabled) {
+        console.warn("[rt] ⚠️ RTM is disabled - listeners not registered", {
+          envVar: import.meta.env.VITE_RTM_ENABLED,
+          localStorage: localStorage.getItem("tb.rtm"),
+        });
+        return;
+      }
 
       // Remove existing listeners first to avoid duplicates
       socketClient.off("message:new");
