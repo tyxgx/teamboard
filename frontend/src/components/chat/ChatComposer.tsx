@@ -63,10 +63,18 @@ export const ChatComposer = ({
   };
 
   const toggleVisibility = () => {
-    if (disabled || readOnly) return;
+    if (disabled || readOnly) {
+      console.log('🔴 Admin-only toggle blocked: disabled=', disabled, 'readOnly=', readOnly);
+      return;
+    }
     // Only allow members (not admins) to use admin-only feature
-    if (isAdmin) return;
-    onChangeVisibility(visibility === "EVERYONE" ? "ADMIN_ONLY" : "EVERYONE");
+    if (isAdmin) {
+      console.log('🔴 Admin-only toggle blocked: user is admin');
+      return;
+    }
+    const newVisibility = visibility === "EVERYONE" ? "ADMIN_ONLY" : "EVERYONE";
+    console.log('🟢 Admin-only toggle:', visibility, '->', newVisibility, 'isAdmin=', isAdmin);
+    onChangeVisibility(newVisibility);
   };
 
   return (
@@ -102,7 +110,10 @@ export const ChatComposer = ({
           {!isAdmin ? (
             <button
               type="button"
-              onClick={toggleVisibility}
+              onClick={() => {
+                console.log('🛡️ Admin-only button clicked:', { isAdmin, visibility, disabled, readOnly });
+                toggleVisibility();
+              }}
               disabled={disabled || readOnly}
               className={`flex h-10 w-10 items-center justify-center rounded-full text-lg transition hover:bg-slate-200 ${
                 visibility === "ADMIN_ONLY" ? "bg-blue-500 text-white" : "bg-slate-100 text-slate-600"

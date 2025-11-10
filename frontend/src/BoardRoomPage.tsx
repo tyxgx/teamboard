@@ -187,7 +187,7 @@ export default function BoardRoomPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [composerValue, setComposerValue] = useState("");
   const [visibility, setVisibility] = useState<"EVERYONE" | "ADMIN_ONLY">("EVERYONE");
-  const [anonymousMode, setAnonymousMode] = useState(true); // Anonymous mode ON by default - always available
+  const [anonymousMode, setAnonymousMode] = useState(false); // Anonymous mode OFF by default - always available
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isRightPanelOpen, setRightPanelOpen] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -819,7 +819,7 @@ export default function BoardRoomPage() {
       setLoadingHistory(false);
       setCommentsError(null);
       setComposerValue("");
-      setAnonymousMode(true); // Reset to default (ON) when switching boards
+      setAnonymousMode(false); // Reset to default (OFF) when switching boards
       setVisibility("EVERYONE");
       setNextCursor(null); // TASK 2.4: Clear cursor when switching boards (reserved for future use)
       pendingMessagesRef.current.clear();
@@ -840,7 +840,7 @@ export default function BoardRoomPage() {
     setCommentsError(null);
     setMessages([]);
     setComposerValue("");
-    setAnonymousMode(true); // Reset to default (ON)
+    setAnonymousMode(false); // Reset to default (OFF)
     setVisibility("EVERYONE");
     pendingMessagesRef.current.clear();
     // Don't clear activeRoomRef or realtimeService here since we just joined above
@@ -1148,7 +1148,7 @@ export default function BoardRoomPage() {
       if (boardDetails?.code === code) {
         setBoardDetails((prev) => (prev ? { ...prev, anonymousEnabled: payload.anonymousEnabled } : prev));
         if (!payload.anonymousEnabled) {
-          setAnonymousMode(true); // Reset to default (ON) - anonymous always available
+          setAnonymousMode(false); // Reset to default (OFF) - anonymous always available
         }
       }
     };
@@ -1266,8 +1266,8 @@ export default function BoardRoomPage() {
     const registerRTMListeners = () => {
       console.log("🔵🔵🔵 registerRTMListeners() CALLED - NO PREFIX", new Date().toISOString());
       console.log("[rt] 🔵 registerRTMListeners() CALLED", new Date().toISOString());
-      const rtmEnabled = isRealtimeMessagingEnabled();
-      
+    const rtmEnabled = isRealtimeMessagingEnabled();
+
       // Log RTM status
       console.log("[rt] RTM Status Check:", {
         rtmEnabled,
@@ -1308,7 +1308,7 @@ export default function BoardRoomPage() {
       const handleMessageNew = (payload: any) => {
         console.log("[rt] 📩 Received message:new - HANDLER CALLED", payload);
         try {
-          handleReceiveMessage(payload);
+        handleReceiveMessage(payload);
         } catch (error) {
           console.error("[rt] ❌ Error in handleMessageNew:", error);
         }
@@ -1348,10 +1348,10 @@ export default function BoardRoomPage() {
               // This is the message we're updating
               return {
                 ...msg,
-                id: payload.id,
+            id: payload.id,
                 status: "sent" as const,
                 createdAt: payload.createdAt ?? msg.createdAt,
-              };
+          };
             }
             return msg;
           });
@@ -2234,7 +2234,7 @@ export default function BoardRoomPage() {
       setCommentsError(null);
       setComposerValue("");
       setVisibility("EVERYONE");
-      setAnonymousMode(true); // Reset to default (ON) when switching boards
+      setAnonymousMode(false); // Reset to default (OFF) when switching boards
       setHasMoreMessages(true); // Reset when switching boards
       setSwitchingBoard(code); // Set loading state immediately
       pendingMessagesRef.current.clear();
@@ -2302,7 +2302,7 @@ export default function BoardRoomPage() {
     setBoardDetails(null);
     setMessages([]);
     setComposerValue("");
-    setAnonymousMode(true); // Reset to default (ON)
+    setAnonymousMode(false); // Reset to default (OFF)
     setVisibility("EVERYONE");
     setCreateDialogOpen(false);
     setJoinDialogOpen(false);
