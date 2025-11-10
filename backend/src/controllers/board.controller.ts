@@ -535,14 +535,10 @@ export const deleteBoard = async (req: Request, res: Response): Promise<void> =>
     });
     ensureBoardExists(board);
 
-    // Allow deletion if user is the creator (regardless of membership status)
-    // OR if user is admin with ACTIVE membership
-    const isCreator = board.createdBy === req.user.id;
+    // Allow deletion if user has any membership (ACTIVE or LEFT) in the board
     const membership = await getBoardMembership(req.user.id, id);
-    const isAdminWithActiveMembership = membership && membership.status === 'ACTIVE' && isAdmin(req.user.id, board, membership);
-    
-    if (!isCreator && !isAdminWithActiveMembership) {
-      res.status(403).json({ message: 'Only board creators or active admins can delete this board' });
+    if (!membership) {
+      res.status(403).json({ message: 'You must be a member of this board to delete it' });
       return;
     }
 
@@ -677,12 +673,8 @@ export const bulkDeleteBoards = async (req: Request, res: Response): Promise<voi
 
       if (!board) continue;
 
-      // Allow deletion if user is the creator (regardless of membership status)
-      // OR if user is admin with ACTIVE membership
-      const isCreator = board.createdBy === req.user.id;
-      const isAdminWithActiveMembership = membership && membership.status === 'ACTIVE' && isAdmin(req.user.id, board, membership);
-
-      if (isCreator || isAdminWithActiveMembership) {
+      // Allow deletion if user has any membership (ACTIVE or LEFT) in the board
+      if (membership) {
         validBoardIds.push(boardId);
       }
     }
