@@ -1335,17 +1335,23 @@ export default function BoardRoomPage() {
 
     // Expose manual registration function for debugging
     if (typeof window !== 'undefined') {
-      (window as any).__registerRTMListeners = () => {
+      const wrappedFunction = () => {
+        console.log("🔴🔴🔴 MANUAL CALL: window.__registerRTMListeners() invoked - NO PREFIX");
         console.log("🔴 MANUAL CALL: window.__registerRTMListeners() invoked");
+        alert("Function called! Check console for logs");
         try {
+          console.log("🔴 About to call registerRTMListeners()");
           registerRTMListeners();
           console.log("🔴 MANUAL CALL: registerRTMListeners() completed");
         } catch (error) {
           console.error("🔴 MANUAL CALL: Error in registerRTMListeners:", error);
+          alert("Error: " + error);
         }
       };
+      (window as any).__registerRTMListeners = wrappedFunction;
       console.log("[rt] 🔧 Manual registration function available: window.__registerRTMListeners()");
       console.log("🔴 Function stored, type:", typeof (window as any).__registerRTMListeners);
+      console.log("🔴 Function is:", (window as any).__registerRTMListeners);
     }
 
     // Re-register on reconnect to ensure they persist
