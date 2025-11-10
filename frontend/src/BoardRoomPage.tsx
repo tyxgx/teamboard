@@ -1013,14 +1013,18 @@ export default function BoardRoomPage() {
     });
     
     const handleReceiveMessage = (payload: any) => {
+      alert(`handleReceiveMessage called! boardCode=${payload.boardCode}, activeBoardCode=${activeBoardCode}`);
       console.log("[rt] 📩 Received message event (receive-message or message:new)", payload);
       const targetCode = payload.boardCode ?? activeBoardCode ?? null;
       if (!targetCode) {
+        alert(`⚠️ No targetCode! payload.boardCode=${payload.boardCode}, activeBoardCode=${activeBoardCode}`);
         console.warn("[rt] ⚠️ handleReceiveMessage: No targetCode", { payload, activeBoardCode });
         return;
       }
 
+      alert(`Target code: ${targetCode}, about to normalize message`);
       const normalized = normalizeMessage(mapServerMessage(payload, targetCode));
+      alert(`Normalized message: id=${normalized.id}, clientId=${normalized.clientMessageId}, message=${normalized.message?.substring(0, 20)}`);
 
       let targetSnapshot: BoardSummary | undefined;
 
@@ -1059,14 +1063,19 @@ export default function BoardRoomPage() {
       }
 
       if (targetSnapshot.code === activeBoardCode) {
+        alert(`Adding message to active board! targetSnapshot.code=${targetSnapshot.code}, activeBoardCode=${activeBoardCode}`);
         setMessages((prev) => {
+          alert(`setMessages callback: prev.length=${prev.length}, normalized.id=${normalized.id}, normalized.clientMessageId=${normalized.clientMessageId}`);
           // Deduplicate messages by ID or clientMessageId
           const existingIndex = prev.findIndex(
             (msg) => msg.id === normalized.id || 
             (normalized.clientMessageId && msg.clientMessageId === normalized.clientMessageId)
           );
           
+          alert(`Existing index: ${existingIndex}`);
+          
           if (existingIndex >= 0) {
+            alert(`Message already exists at index ${existingIndex}, updating it`);
             // Update existing message
             if (normalized.clientMessageId && pendingMessagesRef.current.has(normalized.clientMessageId)) {
               pendingMessagesRef.current.delete(normalized.clientMessageId);
@@ -1082,6 +1091,7 @@ export default function BoardRoomPage() {
             );
           }
           
+          alert(`Adding NEW message! Current count: ${prev.length}, will be ${prev.length + 1}`);
           // Add new message, ensuring proper order by createdAt
           const newMessages = [...prev, normalized].sort(
             (a, b) => new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime()
@@ -1091,9 +1101,11 @@ export default function BoardRoomPage() {
             pendingMessagesRef.current.delete(normalized.clientMessageId);
           }
           
+          alert(`Returning new messages array with length: ${newMessages.length}`);
           return newMessages;
         });
       } else {
+        alert(`Message is for different board! targetSnapshot.code=${targetSnapshot.code}, activeBoardCode=${activeBoardCode}`);
         if (targetSnapshot.readOnly || hiddenBoardIds.includes(targetSnapshot.id)) {
           return;
         }
