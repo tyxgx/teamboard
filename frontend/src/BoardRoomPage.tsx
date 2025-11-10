@@ -1377,11 +1377,19 @@ export default function BoardRoomPage() {
       if (typeof window !== 'undefined') {
         // Wrap handlers to add error handling and logging
         const wrappedMessageAck = (payload: any) => {
+          // Use multiple log methods to ensure visibility
+          alert("WRAPPED ACK HANDLER CALLED!");
+          console.log("🔴🔴🔴 WRAPPED ACK HANDLER CALLED - NO PREFIX");
+          console.warn("⚠️⚠️⚠️ WRAPPED ACK HANDLER - WARNING LEVEL");
+          console.error("❌❌❌ WRAPPED ACK HANDLER - ERROR LEVEL");
           console.log("🔴 WRAPPED HANDLER CALLED", payload);
           try {
+            console.log("🔴 About to call handleMessageAck...");
             handleMessageAck(payload);
+            console.log("🔴 handleMessageAck completed");
           } catch (error) {
             console.error("❌ Handler error:", error);
+            alert("Handler error: " + error);
           }
         };
         
