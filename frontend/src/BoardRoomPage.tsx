@@ -1261,11 +1261,12 @@ export default function BoardRoomPage() {
       socketClient.off("message:ack");
 
       const handleMessageNew = (payload: any) => {
+        console.log("[rt] 📩 Received message:new - HANDLER CALLED", payload);
         handleReceiveMessage(payload);
       };
 
       const handleMessageAck = (payload: { boardCode?: string; clientId?: string; id: string; createdAt?: string }) => {
-        console.log("[rt] 📨 Received message:ack", payload, {
+        console.log("[rt] 📨 Received message:ack - HANDLER CALLED", payload, {
           socketId: socketClient.id,
           socketConnected: socketClient.connected,
         });
@@ -1304,8 +1305,15 @@ export default function BoardRoomPage() {
         }
       };
 
+      console.log("[rt] 🔵 About to register handlers on socket", {
+        socketId: socketClient.id,
+        socketConnected: socketClient.connected,
+      });
+      
       socketClient.on("message:new", handleMessageNew);
       socketClient.on("message:ack", handleMessageAck);
+      
+      console.log("[rt] 🔵 Handlers registered, verifying...");
 
       const isConnected = getSocketConnectionState();
       console.log("[rt] ✅ RTM listeners registered", {
@@ -1314,6 +1322,9 @@ export default function BoardRoomPage() {
         activeBoardCode,
         timestamp: new Date().toISOString(),
       });
+      
+      // Test: Try to manually trigger to see if handlers work
+      console.log("[rt] 🔵 Testing handler registration - handlers should fire on next message");
     };
 
     // Register listeners immediately
