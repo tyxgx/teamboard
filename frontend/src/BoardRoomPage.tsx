@@ -1234,6 +1234,10 @@ export default function BoardRoomPage() {
     socketClient.on("user-joined", handleUserJoined);
     socketClient.on("user-left", handleUserLeft);
 
+    // Store handler references outside function so we can remove them specifically
+    let currentAckHandler: ((payload: any) => void) | null = null;
+    let currentNewHandler: ((payload: any) => void) | null = null;
+
     // Register RTM listeners (message:new, message:ack) - these must persist across reconnects
     // IMPORTANT: Check RTM status inside the function, not from closure, so it's always current
     const registerRTMListeners = () => {
@@ -1258,9 +1262,25 @@ export default function BoardRoomPage() {
         return;
       }
 
-      // Remove existing listeners first to avoid duplicates
-      socketClient.off("message:new");
-      socketClient.off("message:ack");
+      // Remove only our specific handlers (if they exist) to avoid removing test listeners
+      const targetSocket = (typeof window !== 'undefined' && (window as any).__socket__) 
+        ? (window as any).__socket__ 
+        : socketClient;
+      
+      if (currentAckHandler) {
+        targetSocket.off("message:ack", currentAckHandler);
+        if (targetSocket !== socketClient) {
+          socketClient.off("message:ack", currentAckHandler);
+        }
+        console.log("[rt] 🔵 Removed previous ACK handler");
+      }
+      if (currentNewHandler) {
+        targetSocket.off("message:new", currentNewHandler);
+        if (targetSocket !== socketClient) {
+          socketClient.off("message:new", currentNewHandler);
+        }
+        console.log("[rt] 🔵 Removed previous NEW handler");
+      }
 
       const handleMessageNew = (payload: any) => {
         console.log("[rt] 📩 Received message:new - HANDLER CALLED", payload);
@@ -1436,9 +1456,24 @@ export default function BoardRoomPage() {
         ? (window as any).__rtmHandlers.messageNew 
         : handleMessageNew;
       
+      // CRITICAL: Remove only our specific handlers, not all handlers
+      // Use a named function reference so we can remove it later if needed
+      // But for now, just add - don't remove (to avoid removing test listeners)
+      
+      // Store handler references for later removal
+      currentAckHandler = ackHandler;
+      currentNewHandler = newHandler;
+      
       // Register on the socket that actually receives events
       targetSocket.on("message:new", newHandler);
       targetSocket.on("message:ack", ackHandler);
+      
+      console.log("[rt] 🔵 Handlers registered", {
+        targetSocketId: targetSocket.id,
+        handlerAckType: typeof ackHandler,
+        handlerNewType: typeof newHandler,
+        storedReferences: { ack: !!currentAckHandler, new: !!currentNewHandler },
+      });
       
       console.log("[rt] 🔵 Registered handlers on target socket", {
         usingWrapped: ackHandler !== handleMessageAck,
