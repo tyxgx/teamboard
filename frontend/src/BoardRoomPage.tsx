@@ -1435,12 +1435,7 @@ export default function BoardRoomPage() {
         isSameInstance: isSameSocket,
       });
       
-      // CRITICAL: Always register on window.__socket__ since that's what receives events
-      // Test listeners on window.__socket__ work, so register app handlers there too
-      const targetSocket = (typeof window !== 'undefined' && (window as any).__socket__) 
-        ? (window as any).__socket__ 
-        : socketClient;
-      
+      // targetSocket is already defined above, reuse it
       console.log("[rt] 🔵 Registering handlers", {
         usingWindowSocket: targetSocket === (window as any).__socket__,
         socketId: targetSocket.id,
