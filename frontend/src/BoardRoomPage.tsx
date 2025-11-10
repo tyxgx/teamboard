@@ -1312,10 +1312,33 @@ export default function BoardRoomPage() {
         socketConnected: socketClient.connected,
       });
       
+      // Store handlers in window for debugging and manual testing
+      if (typeof window !== 'undefined') {
+        (window as any).__rtmHandlers = {
+          messageNew: handleMessageNew,
+          messageAck: handleMessageAck,
+        };
+        console.log("[rt] 🔵 Handlers stored in window.__rtmHandlers");
+        
+        // Also expose a test function to manually trigger handlers
+        (window as any).__testRTMHandlers = (eventType, payload) => {
+          console.log("🧪 TEST: Manually calling handler for", eventType, payload);
+          if (eventType === 'message:ack') {
+            handleMessageAck(payload);
+          } else if (eventType === 'message:new') {
+            handleMessageNew(payload);
+          }
+        };
+        console.log("[rt] 🔵 Test function available: window.__testRTMHandlers('message:ack', payload)");
+      }
+      
       socketClient.on("message:new", handleMessageNew);
       socketClient.on("message:ack", handleMessageAck);
       
-      console.log("[rt] 🔵 Handlers registered, verifying...");
+      console.log("[rt] 🔵 Handlers registered on socket");
+      
+      // Verify by checking if socket has the listeners
+      console.log("[rt] 🔵 Verifying registration - handlers should fire on next message");
 
       const isConnected = getSocketConnectionState();
       console.log("[rt] ✅ RTM listeners registered", {
