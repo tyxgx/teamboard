@@ -385,30 +385,41 @@ export const MessageList = ({
                       const isOwnByName = comparableName && currentUserName ? comparableName === currentUserName : false;
                       const isOwn = Boolean(isOwnById || isOwnByName);
                       const createdAt = msg.createdAt ?? new Date().toISOString();
+                      
+                      // Group messages: reduce spacing if same sender and within 2 minutes
+                      const prevMsg = index > 0 ? bucket[index - 1] : null;
+                      const isGrouped = prevMsg && 
+                        !prevMsg.system &&
+                        prevMsg.sender === msg.sender && 
+                        prevMsg.userId === msg.userId &&
+                        prevMsg.createdAt && 
+                        new Date(createdAt).getTime() - new Date(prevMsg.createdAt).getTime() < 120000; // 2 minutes
+                      const gap = isGrouped ? "mb-0.5" : "mb-1";
 
                       return (
-                        <MessageBubble
-                          key={msg.id ?? msg.clientMessageId ?? `${label}-${index}`}
-                          isOwn={isOwn}
-                          isAnonymous={msg.sender === "Anonymous"}
-                          audience={msg.visibility}
-                          authorName={msg.sender}
-                          actualSender={actualName}
-                          timestamp={createdAt}
-                        >
-                          <span>{msg.message}</span>
-                          {msg.status === "sending" ? (
-                            <span className="ml-2 inline-flex items-center text-[11px] opacity-60">
-                              <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>
-                              sending
-                            </span>
-                          ) : msg.status === "sent" ? (
-                            <span className="ml-2 inline-flex items-center text-[11px] opacity-70">✓</span>
-                          ) : null}
-                          {msg.status === "failed" ? (
-                            <span className="ml-2 align-middle text-[10px] text-red-500">failed</span>
-                          ) : null}
-                        </MessageBubble>
+                        <div key={msg.id ?? msg.clientMessageId ?? `${label}-${index}`} className={gap}>
+                          <MessageBubble
+                            isOwn={isOwn}
+                            isAnonymous={msg.sender === "Anonymous"}
+                            audience={msg.visibility}
+                            authorName={msg.sender}
+                            actualSender={actualName}
+                            timestamp={createdAt}
+                          >
+                            <span>{msg.message}</span>
+                            {msg.status === "sending" ? (
+                              <span className="ml-2 inline-flex items-center text-[11px] opacity-60">
+                                <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>
+                                sending
+                              </span>
+                            ) : msg.status === "sent" ? (
+                              <span className="ml-2 inline-flex items-center text-[11px] opacity-70">✓</span>
+                            ) : null}
+                            {msg.status === "failed" ? (
+                              <span className="ml-2 align-middle text-[10px] text-red-500">failed</span>
+                            ) : null}
+                          </MessageBubble>
+                        </div>
                       );
                     })}
                   </div>
