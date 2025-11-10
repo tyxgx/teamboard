@@ -1226,20 +1226,19 @@ export default function BoardRoomPage() {
 
     const rtmEnabled = isRealtimeMessagingEnabled();
 
-    let handleMessageNew: ((payload: any) => void) | null = null;
-    let handleMessageAck: ((payload: { boardCode?: string; clientId?: string; id: string; createdAt?: string }) => void) | null = null;
+    // Register RTM listeners (message:new, message:ack) - these must persist across reconnects
+    const registerRTMListeners = () => {
+      if (!rtmEnabled) return;
 
-    if (rtmEnabled) {
-      const isConnected = getSocketConnectionState();
-      console.log("[rt] ✅ RTM enabled, registering message:new and message:ack listeners", {
-        socketConnected: isConnected,
-        socketId: socketClient.id,
-        activeBoardCode,
-      });
-      handleMessageNew = (payload: any) => {
+      // Remove existing listeners first to avoid duplicates
+      socketClient.off("message:new");
+      socketClient.off("message:ack");
+
+      const handleMessageNew = (payload: any) => {
         handleReceiveMessage(payload);
       };
-      handleMessageAck = (payload) => {
+
+      const handleMessageAck = (payload: { boardCode?: string; clientId?: string; id: string; createdAt?: string }) => {
         console.log("[rt] 📨 Received message:ack", payload, {
           socketId: socketClient.id,
           socketConnected: socketClient.connected,
@@ -1281,7 +1280,32 @@ export default function BoardRoomPage() {
 
       socketClient.on("message:new", handleMessageNew);
       socketClient.on("message:ack", handleMessageAck);
-    }
+
+      const isConnected = getSocketConnectionState();
+      console.log("[rt] ✅ RTM listeners registered", {
+        socketConnected: isConnected,
+        socketId: socketClient.id,
+        activeBoardCode,
+        timestamp: new Date().toISOString(),
+      });
+    };
+
+    // Register listeners immediately
+    registerRTMListeners();
+
+    // Re-register on reconnect to ensure they persist
+    const handleReconnect = () => {
+      console.log("[rt] 🔄 Socket reconnected, re-registering RTM listeners");
+      registerRTMListeners();
+    };
+
+    const handleConnect = () => {
+      // Also register on initial connect (in case reconnect didn't fire)
+      registerRTMListeners();
+    };
+
+    socketClient.on("reconnect", handleReconnect);
+    socketClient.on("connect", handleConnect);
 
     return () => {
       socketClient.off("receive-message", handleReceiveMessage);
@@ -1291,12 +1315,11 @@ export default function BoardRoomPage() {
       socketClient.off("membership-updated", handleMembershipUpdated);
       socketClient.off("user-joined", handleUserJoined);
       socketClient.off("user-left", handleUserLeft);
-      if (handleMessageNew) {
-        socketClient.off("message:new", handleMessageNew);
-      }
-      if (handleMessageAck) {
-        socketClient.off("message:ack", handleMessageAck);
-      }
+      socketClient.off("reconnect", handleReconnect);
+      socketClient.off("connect", handleConnect);
+      // Remove RTM listeners
+      socketClient.off("message:new");
+      socketClient.off("message:ack");
     };
   }, [activeBoardCode, applyUnread, boardDetails, hiddenBoardIds, loadBoardDetails, navigate, updateBoardSummary, updateLastReceived, user]);
 
