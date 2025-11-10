@@ -1308,10 +1308,11 @@ export default function BoardRoomPage() {
             searchClientId: payload.clientId,
             searchId: payload.id,
             messageCount: prev.length,
-            firstFewMessages: prev.slice(0, 3).map(m => ({ 
+            allMessages: prev.map(m => ({ 
               id: m.id, 
               clientMessageId: m.clientMessageId, 
-              status: m.status 
+              status: m.status,
+              message: m.message?.substring(0, 30),
             })),
           });
           
@@ -1479,10 +1480,19 @@ export default function BoardRoomPage() {
       const primaryAckHandler = (payload: any) => {
         // This is the handler that actually gets called by the socket
         console.log("🔴🔴🔴 PRIMARY ACK HANDLER CALLED BY SOCKET", payload);
-        alert("PRIMARY ACK HANDLER CALLED!");
+        console.log("🔴 Payload details:", {
+          boardCode: payload.boardCode,
+          clientId: payload.clientId,
+          id: payload.id,
+          createdAt: payload.createdAt,
+          payloadKeys: Object.keys(payload),
+        });
+        
         try {
-          // Call the app's handler logic
+          // Call the app's handler logic - this will update the state
+          console.log("🔴 About to call ackHandler with payload:", payload);
           ackHandler(payload);
+          console.log("🔴 ackHandler completed");
         } catch (error) {
           console.error("❌ Error in primary ACK handler:", error);
           alert("Error: " + error);
