@@ -1473,16 +1473,40 @@ export default function BoardRoomPage() {
       currentAckHandler = ackHandler;
       currentNewHandler = newHandler;
       
+      // CRITICAL: Add a test listener FIRST to verify events are received
+      const testListener = (payload: any) => {
+        alert("TEST LISTENER: message:ack received!");
+        console.log("🧪🧪🧪 TEST LISTENER: message:ack received!", payload);
+      };
+      targetSocket.on("message:ack", testListener);
+      console.log("[rt] 🔵 Test listener added to verify events are received");
+      
       // Register on the socket that actually receives events
       targetSocket.on("message:new", newHandler);
       targetSocket.on("message:ack", ackHandler);
       
+      // Verify handlers are actually registered
+      const socketListeners = (targetSocket as any)._events || (targetSocket as any).listeners?.("message:ack");
       console.log("[rt] 🔵 Handlers registered", {
         targetSocketId: targetSocket.id,
         handlerAckType: typeof ackHandler,
         handlerNewType: typeof newHandler,
         storedReferences: { ack: !!currentAckHandler, new: !!currentNewHandler },
+        socketHasListeners: !!socketListeners,
+        listenerCount: Array.isArray(socketListeners) ? socketListeners.length : (socketListeners ? 1 : 0),
       });
+      
+      // Expose function to check listeners
+      if (typeof window !== 'undefined') {
+        (window as any).__checkSocketListeners = () => {
+          console.log("🔍 Checking socket listeners...");
+          const s = targetSocket;
+          console.log("Socket ID:", s.id);
+          console.log("Socket connected:", s.connected);
+          console.log("Socket events:", (s as any)._events);
+          console.log("message:ack listeners:", (s as any).listeners?.("message:ack") || (s as any)._events?.["message:ack"]);
+        };
+      }
       
       console.log("[rt] 🔵 Registered handlers on target socket", {
         usingWrapped: ackHandler !== handleMessageAck,
