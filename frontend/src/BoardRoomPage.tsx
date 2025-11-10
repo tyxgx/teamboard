@@ -1058,10 +1058,15 @@ export default function BoardRoomPage() {
         return sortBoardSummaries(next);
       });
 
+      alert(`targetSnapshot check: ${targetSnapshot ? `Found! code=${targetSnapshot.code}, activeBoardCode=${activeBoardCode}` : 'NOT FOUND!'}`);
+      
       if (!targetSnapshot) {
+        alert(`⚠️ targetSnapshot is undefined! Board not found in boards list. targetCode=${targetCode}`);
         return;
       }
 
+      alert(`targetSnapshot.code=${targetSnapshot.code}, activeBoardCode=${activeBoardCode}, match=${targetSnapshot.code === activeBoardCode}`);
+      
       if (targetSnapshot.code === activeBoardCode) {
         alert(`Adding message to active board! targetSnapshot.code=${targetSnapshot.code}, activeBoardCode=${activeBoardCode}`);
         setMessages((prev) => {
