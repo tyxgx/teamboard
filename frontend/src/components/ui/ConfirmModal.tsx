@@ -1,11 +1,12 @@
-import { useEffect } from "react";
+import { useEffect, ReactNode } from "react";
 
 type ConfirmModalProps = {
   open: boolean;
   title: string;
-  description?: string;
+  description?: string | ReactNode;
   confirmLabel: string;
   cancelLabel?: string;
+  confirmVariant?: "danger" | "default";
   onConfirm: () => void;
   onCancel: () => void;
 };
@@ -16,6 +17,7 @@ export const ConfirmModal = ({
   description,
   confirmLabel,
   cancelLabel = "Cancel",
+  confirmVariant = "default",
   onConfirm,
   onCancel,
 }: ConfirmModalProps) => {
@@ -44,7 +46,13 @@ export const ConfirmModal = ({
         onClick={(event) => event.stopPropagation()}
       >
         <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
-        {description ? <p className="mt-2 text-sm text-slate-600">{description}</p> : null}
+        {description ? (
+          typeof description === "string" ? (
+            <p className="mt-2 text-sm text-slate-600">{description}</p>
+          ) : (
+            <div className="mt-2 text-sm text-slate-600">{description}</div>
+          )
+        ) : null}
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
           <button
             type="button"
@@ -56,7 +64,11 @@ export const ConfirmModal = ({
           <button
             type="button"
             onClick={onConfirm}
-            className="w-full rounded-full bg-red-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-600 sm:w-auto"
+            className={`w-full rounded-full px-4 py-2 text-sm font-semibold text-white transition sm:w-auto ${
+              confirmVariant === "danger"
+                ? "bg-red-500 hover:bg-red-600"
+                : "bg-emerald-500 hover:bg-emerald-600"
+            }`}
           >
             {confirmLabel}
           </button>

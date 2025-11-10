@@ -66,7 +66,11 @@ type BoardDetails = {
   isCreator: boolean;
 };
 
-type ModalState = { type: "leave"; board: { id: string; code: string; name: string } } | null;
+type ModalState =
+  | { type: "leave"; board: { id: string; code: string; name: string } }
+  | { type: "bulk-leave"; boardIds: string[]; boardNames: string[] }
+  | { type: "bulk-delete"; boardIds: string[]; boardNames: string[] }
+  | null;
 
 const parseJSON = <T,>(value: string | null, fallback: T): T => {
   if (!value) return fallback;
@@ -2006,6 +2010,129 @@ export default function BoardRoomPage() {
     }
   }, [boardDetails, getAuthHeaders, handleAuthFailure, debouncedLoadBoards, modal, navigate, updateBoardSummary]);
 
+  const handleBulkLeaveBoards = useCallback(
+    (boardIds: string[]) => {
+      const boardNames = boardIds
+        .map((id) => boards.find((b) => b.id === id)?.name)
+        .filter((name): name is string => Boolean(name));
+      setModal({ type: "bulk-leave", boardIds, boardNames });
+    },
+    [boards]
+  );
+
+  const handleBulkDeleteBoards = useCallback(
+    (boardIds: string[]) => {
+      const boardNames = boardIds
+        .map((id) => boards.find((b) => b.id === id)?.name)
+        .filter((name): name is string => Boolean(name));
+      setModal({ type: "bulk-delete", boardIds, boardNames });
+    },
+    [boards]
+  );
+
+  const executeBulkLeaveBoards = useCallback(async () => {
+    if (!modal || modal.type !== "bulk-leave") return;
+    const headers = getAuthHeaders();
+    if (!headers) return;
+    try {
+      const response = await axios.post(
+        `${BACKEND}/api/boards/bulk-leave`,
+        { boardIds: modal.boardIds },
+        { headers }
+      );
+      const { successCount, results } = response.data;
+      
+      // Update local state for successfully left boards
+      results.forEach((result: { boardId: string; success: boolean }) => {
+        if (result.success) {
+          const board = boards.find((b) => b.id === result.boardId);
+          if (board) {
+            updateBoardSummary(board.code, { membershipStatus: "LEFT", readOnly: true });
+            if (boardDetails?.code === board.code) {
+              if (activeRoomRef.current === board.code) {
+                activeRoomRef.current = null;
+              }
+              delete lastReceivedRef.current[board.code];
+              delete lastDeltaRunRef.current[board.code];
+              realtimeService.clearRoom();
+              setBoardDetails((prev) =>
+                prev ? { ...prev, membershipStatus: "LEFT", readOnly: true } : prev
+              );
+              navigate("/app");
+            }
+          }
+        }
+      });
+
+      debouncedLoadBoards();
+      if (successCount < modal.boardIds.length) {
+        console.warn(`Only ${successCount} of ${modal.boardIds.length} boards were left`);
+      }
+    } catch (error: any) {
+      if (error?.response?.status === 401) {
+        handleAuthFailure();
+        return;
+      }
+      console.error("Failed to leave boards", error);
+    } finally {
+      setModal(null);
+    }
+  }, [boardDetails, getAuthHeaders, handleAuthFailure, debouncedLoadBoards, modal, navigate, updateBoardSummary, boards]);
+
+  const executeBulkDeleteBoards = useCallback(async () => {
+    if (!modal || modal.type !== "bulk-delete") return;
+    const headers = getAuthHeaders();
+    if (!headers) return;
+    try {
+      const response = await axios.post(
+        `${BACKEND}/api/boards/bulk-delete`,
+        { boardIds: modal.boardIds },
+        { headers }
+      );
+      const { successCount, results } = response.data;
+      
+      // Remove successfully deleted boards from state
+      const deletedBoardIds = results
+        .filter((result: { boardId: string; success: boolean }) => result.success)
+        .map((result: { boardId: string }) => result.boardId);
+      
+      if (deletedBoardIds.length > 0) {
+        setBoards((prev) => prev.filter((board) => !deletedBoardIds.includes(board.id)));
+        
+        // Clean up state for deleted boards
+        deletedBoardIds.forEach((boardId: string) => {
+          const board = boards.find((b) => b.id === boardId);
+          if (board) {
+            applyUnread(board.code, () => 0);
+            if (boardDetails?.code === board.code) {
+              if (activeRoomRef.current === board.code) {
+                activeRoomRef.current = null;
+              }
+              delete lastReceivedRef.current[board.code];
+              delete lastDeltaRunRef.current[board.code];
+              realtimeService.clearRoom();
+              setRightPanelOpen(false);
+              navigate("/app");
+            }
+          }
+        });
+      }
+
+      debouncedLoadBoards();
+      if (successCount < modal.boardIds.length) {
+        console.warn(`Only ${successCount} of ${modal.boardIds.length} boards were deleted`);
+      }
+    } catch (error: any) {
+      if (error?.response?.status === 401) {
+        handleAuthFailure();
+        return;
+      }
+      console.error("Failed to delete boards", error);
+    } finally {
+      setModal(null);
+    }
+  }, [boardDetails, getAuthHeaders, handleAuthFailure, debouncedLoadBoards, modal, navigate, updateBoardSummary, boards, setHiddenBoardIds, applyUnread, setRightPanelOpen]);
+
   const handleHideBoard = useCallback(
     (board: { id: string; code: string; name: string }) => {
       setHiddenBoardIds((prev) => (prev.includes(board.id) ? prev : [...prev, board.id]));
@@ -2239,6 +2366,8 @@ export default function BoardRoomPage() {
     unreadByBoard,
     showFooterActions: Boolean(boardDetails?.code),
     onPrefetchBoard: prefetchBoard,
+    onBulkLeaveBoards: handleBulkLeaveBoards,
+    onBulkDeleteBoards: handleBulkDeleteBoards,
   } as const;
 
   return (
@@ -2401,6 +2530,47 @@ export default function BoardRoomPage() {
         description="You won't receive new messages after leaving, but you can still read past history."
         confirmLabel="Leave board"
         onConfirm={handleLeaveBoard}
+        onCancel={() => setModal(null)}
+      />
+      <ConfirmModal
+        open={modal?.type === "bulk-leave"}
+        title={`Leave ${modal?.boardNames.length ?? 0} ${(modal?.boardNames.length ?? 0) === 1 ? "board" : "boards"}?`}
+        description={
+          modal?.type === "bulk-leave" ? (
+            <div>
+              <p className="mb-2">You won't receive new messages after leaving, but you can still read past history.</p>
+              <p className="text-sm font-medium">Boards:</p>
+              <ul className="mt-1 max-h-40 list-disc list-inside space-y-1 overflow-y-auto text-sm text-slate-600">
+                {modal.boardNames.map((name) => (
+                  <li key={name}>{name}</li>
+                ))}
+              </ul>
+            </div>
+          ) : undefined
+        }
+        confirmLabel={`Leave ${modal?.boardNames.length ?? 0} ${(modal?.boardNames.length ?? 0) === 1 ? "board" : "boards"}`}
+        onConfirm={executeBulkLeaveBoards}
+        onCancel={() => setModal(null)}
+      />
+      <ConfirmModal
+        open={modal?.type === "bulk-delete"}
+        title={`Delete ${modal?.boardNames.length ?? 0} ${(modal?.boardNames.length ?? 0) === 1 ? "board" : "boards"}?`}
+        description={
+          modal?.type === "bulk-delete" ? (
+            <div>
+              <p className="mb-2 text-red-600">This action cannot be undone. All messages and members will be permanently removed.</p>
+              <p className="text-sm font-medium">Boards:</p>
+              <ul className="mt-1 max-h-40 list-disc list-inside space-y-1 overflow-y-auto text-sm text-slate-600">
+                {modal.boardNames.map((name) => (
+                  <li key={name}>{name}</li>
+                ))}
+              </ul>
+            </div>
+          ) : undefined
+        }
+        confirmLabel={`Delete ${modal?.boardNames.length ?? 0} ${(modal?.boardNames.length ?? 0) === 1 ? "board" : "boards"}`}
+        confirmVariant="danger"
+        onConfirm={executeBulkDeleteBoards}
         onCancel={() => setModal(null)}
       />
 

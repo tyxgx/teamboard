@@ -17,6 +17,8 @@ export type SidebarBoard = {
   membershipStatus: MembershipStatus;
   readOnly: boolean;
   unread: number;
+  role?: "ADMIN" | "MEMBER" | null;
+  isCreator?: boolean;
 };
 
 type SidebarProps = {
@@ -34,6 +36,8 @@ type SidebarProps = {
   variant?: "desktop" | "mobile";
   onClose?: () => void;
   onPrefetchBoard?: (code: string) => void;
+  onBulkLeaveBoards?: (boardIds: string[]) => void;
+  onBulkDeleteBoards?: (boardIds: string[]) => void;
 };
 
 const formatRelative = (iso?: string | null) => {
@@ -78,11 +82,15 @@ export const Sidebar = React.memo(({
   variant = "desktop",
   onClose,
   onPrefetchBoard,
+  onBulkLeaveBoards,
+  onBulkDeleteBoards,
 }: SidebarProps) => {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   const [accountMenu, setAccountMenu] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedBoardIds, setSelectedBoardIds] = useState<Set<string>>(new Set());
   const prefetchTimeoutRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   // TASK 3.5: Intersection Observer for intelligent prefetching
   const boardRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -183,6 +191,18 @@ export const Sidebar = React.memo(({
                 onClick={() => {
                   closeMenus();
                   closeIfMobile();
+                  setSelectionMode(true);
+                  setSelectedBoardIds(new Set());
+                }}
+                className="block w-full px-4 py-2 text-left text-slate-200 transition hover:bg-slate-700/50"
+              >
+                Select boards
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  closeMenus();
+                  closeIfMobile();
                   onLogout();
                 }}
                 className="block w-full px-4 py-2 text-left text-slate-200 transition hover:bg-slate-700/50"
@@ -231,20 +251,34 @@ export const Sidebar = React.memo(({
               const unread = unreadByBoard[board.code] ?? board.unread ?? 0;
               const preview = buildPreview(board);
               const timeLabel = formatRelative(board.lastCommentAt ?? board.lastActivity);
+              const isSelected = selectedBoardIds.has(board.id);
+              const canDelete = board.isCreator || board.role === "ADMIN";
 
               return (
                 <div key={board.id} className="group relative">
                   <button
                     type="button"
                     onClick={() => {
-                      closeMenus();
-                      closeIfMobile();
-                      // Clear any pending prefetch
-                      if (prefetchTimeoutRef.current[board.code]) {
-                        clearTimeout(prefetchTimeoutRef.current[board.code]);
-                        delete prefetchTimeoutRef.current[board.code];
+                      if (selectionMode) {
+                        setSelectedBoardIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(board.id)) {
+                            next.delete(board.id);
+                          } else {
+                            next.add(board.id);
+                          }
+                          return next;
+                        });
+                      } else {
+                        closeMenus();
+                        closeIfMobile();
+                        // Clear any pending prefetch
+                        if (prefetchTimeoutRef.current[board.code]) {
+                          clearTimeout(prefetchTimeoutRef.current[board.code]);
+                          delete prefetchTimeoutRef.current[board.code];
+                        }
+                        onSelectBoard(board.code);
                       }
-                      onSelectBoard(board.code);
                     }}
                     ref={(el) => {
                       // TASK 3.5: Store ref for Intersection Observer
@@ -267,9 +301,29 @@ export const Sidebar = React.memo(({
                       }
                     }}
                     className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition ${
-                      isActive ? "bg-slate-700/60 shadow-inner" : "hover:bg-slate-700/40"
+                      isActive ? "bg-slate-700/60 shadow-inner" : isSelected ? "bg-slate-700/50" : "hover:bg-slate-700/40"
                     }`}
                   >
+                    {selectionMode && (
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          setSelectedBoardIds((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(board.id)) {
+                              next.delete(board.id);
+                            } else {
+                              next.add(board.id);
+                            }
+                            return next;
+                          });
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="h-4 w-4 cursor-pointer rounded border-slate-500 bg-slate-700 text-emerald-500 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-0"
+                      />
+                    )}
                     <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-600/80 text-sm font-semibold text-slate-100">
                       {board.name
                         .split(" ")
@@ -302,19 +356,21 @@ export const Sidebar = React.memo(({
                     </div>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setMenuOpen((prev) => (prev === board.id ? null : board.id));
-                    }}
-                    className="absolute right-2 top-1/2 hidden -translate-y-1/2 rounded-full p-1 text-slate-400 transition hover:bg-slate-700/60 group-hover:block"
-                    aria-label="Board actions"
-                  >
-                    ⋮
-                  </button>
+                  {!selectionMode && (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setMenuOpen((prev) => (prev === board.id ? null : board.id));
+                      }}
+                      className="absolute right-2 top-1/2 hidden -translate-y-1/2 rounded-full p-1 text-slate-400 transition hover:bg-slate-700/60 group-hover:block"
+                      aria-label="Board actions"
+                    >
+                      ⋮
+                    </button>
+                  )}
 
-                  {menuOpen === board.id ? (
+                  {!selectionMode && menuOpen === board.id ? (
                     <div className="absolute right-0 top-full z-30 mt-2 w-52 rounded-xl bg-slate-800/95 py-2 text-sm text-slate-100 shadow-xl">
                       <button
                         type="button"
@@ -360,7 +416,77 @@ export const Sidebar = React.memo(({
         )}
       </div>
 
-      {showFooterActions ? (
+      {selectionMode && selectedBoardIds.size > 0 ? (
+        <div className="border-t border-slate-800/60 bg-slate-900/70 px-4 py-4">
+          <div className="mb-3 text-center text-sm text-slate-300">
+            {selectedBoardIds.size} {selectedBoardIds.size === 1 ? "board" : "boards"} selected
+          </div>
+          <div className="flex flex-col gap-2">
+            {(() => {
+              const selectedBoards = filteredBoards.filter((b) => selectedBoardIds.has(b.id));
+              const canDeleteBoards = selectedBoards.filter((b) => b.isCreator || b.role === "ADMIN");
+              const canLeaveBoards = selectedBoards.filter((b) => b.membershipStatus === "ACTIVE" && !(b.isCreator || b.role === "ADMIN"));
+              const hasBoth = canDeleteBoards.length > 0 && canLeaveBoards.length > 0;
+
+              return (
+                <>
+                  {canLeaveBoards.length > 0 && onBulkLeaveBoards && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onBulkLeaveBoards(canLeaveBoards.map((b) => b.id));
+                        setSelectionMode(false);
+                        setSelectedBoardIds(new Set());
+                      }}
+                      className="rounded-full border border-red-500 px-4 py-2 text-sm font-semibold text-red-500 transition hover:bg-red-500/10"
+                    >
+                      Leave {canLeaveBoards.length} {canLeaveBoards.length === 1 ? "board" : "boards"}
+                    </button>
+                  )}
+                  {canDeleteBoards.length > 0 && onBulkDeleteBoards && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onBulkDeleteBoards(canDeleteBoards.map((b) => b.id));
+                        setSelectionMode(false);
+                        setSelectedBoardIds(new Set());
+                      }}
+                      className="rounded-full bg-red-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-600"
+                    >
+                      Delete {canDeleteBoards.length} {canDeleteBoards.length === 1 ? "board" : "boards"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectionMode(false);
+                      setSelectedBoardIds(new Set());
+                    }}
+                    className="rounded-full border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-700/50"
+                  >
+                    Cancel
+                  </button>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      ) : selectionMode ? (
+        <div className="border-t border-slate-800/60 bg-slate-900/70 px-4 py-4">
+          <button
+            type="button"
+            onClick={() => {
+              setSelectionMode(false);
+              setSelectedBoardIds(new Set());
+            }}
+            className="w-full rounded-full border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-700/50"
+          >
+            Cancel selection
+          </button>
+        </div>
+      ) : null}
+
+      {!selectionMode && showFooterActions ? (
         <div className="border-t border-slate-800/60 bg-slate-900/70 px-4 py-4">
           <div className="flex flex-col gap-3">
             <button
