@@ -320,15 +320,43 @@ export default function Landing() {
   const handleCustomGoogleSignIn = useCallback(() => {
     // @ts-ignore global
     if (window.google?.accounts?.id) {
-      // Trigger One Tap prompt programmatically
+      // Create or get hidden button container
+      let hiddenDiv = document.getElementById('hiddenGoogleSignIn');
+      if (!hiddenDiv) {
+        hiddenDiv = document.createElement('div');
+        hiddenDiv.id = 'hiddenGoogleSignIn';
+        hiddenDiv.style.position = 'absolute';
+        hiddenDiv.style.left = '-9999px';
+        hiddenDiv.style.opacity = '0';
+        hiddenDiv.style.pointerEvents = 'none';
+        hiddenDiv.style.width = '0';
+        hiddenDiv.style.height = '0';
+        document.body.appendChild(hiddenDiv);
+      }
+
+      // Clear any existing content
+      hiddenDiv.innerHTML = '';
+
+      // Render Google button in hidden container
       // @ts-ignore global
-      google.accounts.id.prompt((notification: any) => {
-        // Handle notification if needed
-        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-          // If One Tap is not shown, we can show a fallback or just log
-          console.log('One Tap not displayed');
-        }
+      google.accounts.id.renderButton(hiddenDiv, {
+        type: 'standard',
+        theme: 'outline',
+        size: 'large',
+        text: 'signin_with',
       });
+
+      // Click the hidden button after a short delay to ensure it's rendered
+      setTimeout(() => {
+        const button = hiddenDiv?.querySelector('div[role="button"]') as HTMLElement;
+        if (button) {
+          button.click();
+        } else {
+          // Fallback: try One Tap prompt
+          // @ts-ignore global
+          google.accounts.id.prompt();
+        }
+      }, 200);
     }
   }, []);
 
