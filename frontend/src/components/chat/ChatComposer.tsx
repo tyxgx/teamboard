@@ -1,4 +1,4 @@
-import { useRef, type ChangeEvent, type KeyboardEvent } from "react";
+import { useRef, useEffect, type ChangeEvent, type KeyboardEvent } from "react";
 
 type Visibility = "EVERYONE" | "ADMIN_ONLY";
 
@@ -31,6 +31,11 @@ export const ChatComposer = ({
 }: ChatComposerProps) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Debug: Log visibility changes
+  useEffect(() => {
+    console.log('📊 ChatComposer visibility changed:', visibility, 'isAdmin:', isAdmin);
+  }, [visibility, isAdmin]);
+
   const trySendMessage = () => {
     if (disabled || readOnly) return;
     if (!value.trim()) return;
@@ -62,14 +67,20 @@ export const ChatComposer = ({
     onToggleAnonymous(!anonymous);
   };
 
-  const toggleVisibility = () => {
+  const toggleVisibility = (e?: React.MouseEvent) => {
+    // Prevent form submission if button is inside a form
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    
     if (disabled || readOnly) {
       console.log('🔴 Admin-only toggle blocked: disabled=', disabled, 'readOnly=', readOnly);
       return;
     }
     // Only allow members (not admins) to use admin-only feature
     if (isAdmin) {
-      console.log('🔴 Admin-only toggle blocked: user is admin');
+      console.log('🔴 Admin-only toggle blocked: user is admin, isAdmin=', isAdmin);
       return;
     }
     const newVisibility = visibility === "EVERYONE" ? "ADMIN_ONLY" : "EVERYONE";
@@ -110,12 +121,25 @@ export const ChatComposer = ({
           {!isAdmin ? (
             <button
               type="button"
-              onClick={() => {
-                console.log('🛡️ Admin-only button clicked:', { isAdmin, visibility, disabled, readOnly });
-                toggleVisibility();
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('🛡️ Admin-only button clicked:', { 
+                  isAdmin, 
+                  visibility, 
+                  disabled, 
+                  readOnly, 
+                  buttonVisible: true,
+                  currentVisibility: visibility 
+                });
+                toggleVisibility(e);
+                // Force a re-render check
+                setTimeout(() => {
+                  console.log('🔄 After toggle, visibility should be:', visibility === "EVERYONE" ? "ADMIN_ONLY" : "EVERYONE");
+                }, 100);
               }}
               disabled={disabled || readOnly}
-              className={`flex h-10 w-10 items-center justify-center rounded-full text-lg transition hover:bg-slate-200 ${
+              className={`relative flex h-10 w-10 items-center justify-center rounded-full text-lg transition hover:bg-slate-200 ${
                 visibility === "ADMIN_ONLY" ? "bg-blue-500 text-white" : "bg-slate-100 text-slate-600"
               } disabled:cursor-not-allowed disabled:opacity-60`}
               aria-label={visibility === "ADMIN_ONLY" ? "Send to everyone" : "Send to admins only"}
@@ -123,8 +147,15 @@ export const ChatComposer = ({
               title={visibility === "ADMIN_ONLY" ? "Admin only (only admins will see this)" : "Everyone (click to send to admins only)"}
             >
               🛡️
+              {visibility === "ADMIN_ONLY" && (
+                <span className="absolute -top-1 -right-1 h-2 w-2 rounded-full bg-blue-600"></span>
+              )}
             </button>
-          ) : null}
+          ) : (
+            <div className="text-[10px] text-slate-400 opacity-0 pointer-events-none" aria-hidden="true">
+              {/* Hidden placeholder for layout consistency */}
+            </div>
+          )}
         </div>
 
         <textarea
