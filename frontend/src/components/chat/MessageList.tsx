@@ -329,7 +329,7 @@ export const MessageList = ({
             {isLoading && messages.length === 0 ? (
               <>
                 {[...Array(5)].map((_, i) => (
-                  <div key={i} className="flex w-full gap-3 justify-start animate-pulse">
+                  <div key={i} className="flex w-full gap-2 justify-start animate-pulse px-4">
                     <div className="w-9" aria-hidden />
                     <div className="max-w-[65%] rounded-2xl border border-slate-200 bg-slate-100 px-4 py-3 shadow-sm">
                       <div className="mb-2 h-4 w-24 bg-slate-300 rounded" />
@@ -354,7 +354,7 @@ export const MessageList = ({
                       <span className="absolute inset-x-0 h-px bg-slate-200" aria-hidden />
                     </div>
                   ) : null}
-                  <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1">
                     {bucket.map((msg, index) => {
                       if (msg.system) {
                         return (
