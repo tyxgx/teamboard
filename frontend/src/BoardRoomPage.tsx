@@ -1391,6 +1391,7 @@ export default function BoardRoomPage() {
         isSameInstance: isSameSocket,
       });
       
+      // CRITICAL: Register handlers and verify they're actually on the socket
       socketClient.on("message:new", handleMessageNew);
       socketClient.on("message:ack", handleMessageAck);
       
@@ -1399,7 +1400,17 @@ export default function BoardRoomPage() {
         socketConnected: socketClient.connected,
         handlerNew: handleMessageNew,
         handlerAck: handleMessageAck,
+        isSameAsWindowSocket: isSameSocket,
+        windowSocketId: (typeof window !== 'undefined' && (window as any).__socket__) ? (window as any).__socket__.id : 'N/A',
       });
+      
+      // If not the same socket, register on window socket too (this is the critical fix!)
+      if (!isSameSocket && typeof window !== 'undefined' && (window as any).__socket__) {
+        console.warn("[rt] ⚠️ CRITICAL: socketClient is NOT the same as window.__socket__!");
+        console.warn("[rt] ⚠️ Registering handlers on window.__socket__ as well");
+        (window as any).__socket__.on("message:new", handleMessageNew);
+        (window as any).__socket__.on("message:ack", handleMessageAck);
+      }
       
       // Immediately test if handlers are callable
       console.log("[rt] 🔵 Testing handlers directly...");
