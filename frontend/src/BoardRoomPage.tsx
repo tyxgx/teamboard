@@ -1408,14 +1408,20 @@ export default function BoardRoomPage() {
           originalNew: handleMessageNew,
           originalAck: handleMessageAck,
         };
-        console.log("[rt] 🔵 Handlers stored in window.__rtmHandlers (wrapped with error handling)");
+        console.log("[rt] 🔵 Handlers stored in window.__rtmHandlers (wrapped with error handling)", {
+          hasMessageAck: !!(window as any).__rtmHandlers?.messageAck,
+          hasMessageNew: !!(window as any).__rtmHandlers?.messageNew,
+          ackType: typeof (window as any).__rtmHandlers?.messageAck,
+        });
         
         // Also expose a test function to manually trigger handlers
         // Fixed TypeScript types: eventType: string, payload: any
         (window as any).__testRTMHandlers = (eventType: string, payload: any) => {
           console.log("🧪 TEST: Manually calling handler for", eventType, payload);
           if (eventType === 'message:ack') {
-            handleMessageAck(payload);
+            // Use wrapped handler if available
+            const handler = (window as any).__rtmHandlers?.messageAck || handleMessageAck;
+            handler(payload);
           } else if (eventType === 'message:new') {
             handleMessageNew(payload);
           }
