@@ -1355,11 +1355,32 @@ export default function BoardRoomPage() {
       
       // Store handlers in window for debugging and manual testing
       if (typeof window !== 'undefined') {
-        (window as any).__rtmHandlers = {
-          messageNew: handleMessageNew,
-          messageAck: handleMessageAck,
+        // Wrap handlers to add error handling and logging
+        const wrappedMessageAck = (payload: any) => {
+          console.log("🔴 WRAPPED HANDLER CALLED", payload);
+          try {
+            handleMessageAck(payload);
+          } catch (error) {
+            console.error("❌ Handler error:", error);
+          }
         };
-        console.log("[rt] 🔵 Handlers stored in window.__rtmHandlers");
+        
+        const wrappedMessageNew = (payload: any) => {
+          console.log("🔴 WRAPPED HANDLER NEW CALLED", payload);
+          try {
+            handleMessageNew(payload);
+          } catch (error) {
+            console.error("❌ Handler error:", error);
+          }
+        };
+        
+        (window as any).__rtmHandlers = {
+          messageNew: wrappedMessageNew,
+          messageAck: wrappedMessageAck,
+          originalNew: handleMessageNew,
+          originalAck: handleMessageAck,
+        };
+        console.log("[rt] 🔵 Handlers stored in window.__rtmHandlers (wrapped with error handling)");
         
         // Also expose a test function to manually trigger handlers
         // Fixed TypeScript types: eventType: string, payload: any
@@ -1407,14 +1428,27 @@ export default function BoardRoomPage() {
         isSameAsSocketClient: targetSocket === socketClient,
       });
       
+      // Use wrapped handlers if available (they have better error handling)
+      const ackHandler = (typeof window !== 'undefined' && (window as any).__rtmHandlers?.messageAck) 
+        ? (window as any).__rtmHandlers.messageAck 
+        : handleMessageAck;
+      const newHandler = (typeof window !== 'undefined' && (window as any).__rtmHandlers?.messageNew) 
+        ? (window as any).__rtmHandlers.messageNew 
+        : handleMessageNew;
+      
       // Register on the socket that actually receives events
-      targetSocket.on("message:new", handleMessageNew);
-      targetSocket.on("message:ack", handleMessageAck);
+      targetSocket.on("message:new", newHandler);
+      targetSocket.on("message:ack", ackHandler);
+      
+      console.log("[rt] 🔵 Registered handlers on target socket", {
+        usingWrapped: ackHandler !== handleMessageAck,
+        socketId: targetSocket.id,
+      });
       
       // Also register on socketClient for compatibility
       if (targetSocket !== socketClient) {
-        socketClient.on("message:new", handleMessageNew);
-        socketClient.on("message:ack", handleMessageAck);
+        socketClient.on("message:new", newHandler);
+        socketClient.on("message:ack", ackHandler);
         console.log("[rt] 🔵 Also registered on socketClient for compatibility");
       }
       
