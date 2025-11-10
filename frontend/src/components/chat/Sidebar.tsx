@@ -423,7 +423,10 @@ export const Sidebar = React.memo(({
           <div className="flex flex-col gap-2">
             {(() => {
               const selectedBoards = filteredBoards.filter((b) => selectedBoardIds.has(b.id));
-              const canDeleteBoards = selectedBoards.filter((b) => b.isCreator || b.role === "ADMIN");
+              // Allow deletion if user is creator (regardless of membership status) OR admin with ACTIVE membership
+              const canDeleteBoards = selectedBoards.filter((b) => 
+                b.isCreator || (b.role === "ADMIN" && b.membershipStatus === "ACTIVE")
+              );
               const canLeaveBoards = selectedBoards.filter((b) => b.membershipStatus === "ACTIVE" && !(b.isCreator || b.role === "ADMIN"));
 
               return (
