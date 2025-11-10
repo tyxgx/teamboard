@@ -187,7 +187,7 @@ export default function BoardRoomPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [composerValue, setComposerValue] = useState("");
   const [visibility, setVisibility] = useState<"EVERYONE" | "ADMIN_ONLY">("EVERYONE");
-  const [anonymousMode, setAnonymousMode] = useState(false); // Anonymous mode OFF by default - user's choice per message
+  const [anonymousMode, setAnonymousMode] = useState(true); // Anonymous mode ON by default - always available
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isRightPanelOpen, setRightPanelOpen] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -819,7 +819,7 @@ export default function BoardRoomPage() {
       setLoadingHistory(false);
       setCommentsError(null);
       setComposerValue("");
-      setAnonymousMode(false); // Reset to default (OFF) when switching boards
+      setAnonymousMode(true); // Reset to default (ON) when switching boards
       setVisibility("EVERYONE");
       setNextCursor(null); // TASK 2.4: Clear cursor when switching boards (reserved for future use)
       pendingMessagesRef.current.clear();
@@ -840,7 +840,7 @@ export default function BoardRoomPage() {
     setCommentsError(null);
     setMessages([]);
     setComposerValue("");
-    setAnonymousMode(false); // Reset to default (OFF)
+    setAnonymousMode(true); // Reset to default (ON)
     setVisibility("EVERYONE");
     pendingMessagesRef.current.clear();
     // Don't clear activeRoomRef or realtimeService here since we just joined above
@@ -1148,7 +1148,7 @@ export default function BoardRoomPage() {
       if (boardDetails?.code === code) {
         setBoardDetails((prev) => (prev ? { ...prev, anonymousEnabled: payload.anonymousEnabled } : prev));
         if (!payload.anonymousEnabled) {
-          setAnonymousMode(false); // Reset to default (OFF) if anonymous is disabled on board
+          setAnonymousMode(true); // Reset to default (ON) - anonymous always available
         }
       }
     };
@@ -1659,11 +1659,8 @@ export default function BoardRoomPage() {
     if (!user || !boardDetails || !boardDetails.id || !boardDetails.code) return;
     const trimmed = composerValue.trim();
     if (!trimmed) return;
-    const effectiveVisibility =
-      visibility === "ADMIN_ONLY" && !isAdmin ? "EVERYONE" : visibility;
-    if (visibility === "ADMIN_ONLY" && !isAdmin) {
-      setVisibility("EVERYONE");
-    }
+    // Members can send admin-only messages - no restriction needed
+    const effectiveVisibility = visibility;
 
     const legacySend = async () => {
       const clientMessageId = `client-${Date.now()}`;
@@ -1803,34 +1800,6 @@ export default function BoardRoomPage() {
     visibility,
   ]);
 
-  const handleToggleAnonymous = useCallback(
-    async (enabled: boolean) => {
-      if (!boardDetails) return;
-      // Only admins can disable anonymous mode
-      if (!enabled && !isAdmin) {
-        return; // Prevent non-admins from disabling anonymous mode
-      }
-      const headers = getAuthHeaders();
-      if (!headers) return;
-      try {
-        await axios.patch(
-          `${BACKEND}/api/boards/${boardDetails.id}/anonymous`,
-          { enabled },
-          { headers }
-        );
-        setBoardDetails((prev) => (prev ? { ...prev, anonymousEnabled: enabled } : prev));
-        updateBoardSummary(boardDetails.code, { anonymousEnabled: enabled });
-        if (!enabled) setAnonymousMode(false); // If anonymous is disabled on board, reset to default (OFF) for next message
-      } catch (error: any) {
-        if (error?.response?.status === 401) {
-          handleAuthFailure();
-          return;
-        }
-        console.error("Failed to toggle anonymous mode", error);
-      }
-    },
-    [boardDetails, getAuthHeaders, handleAuthFailure, updateBoardSummary, isAdmin]
-  );
 
   const handleRetryComments = useCallback(async () => {
     if (!boardDetails?.id || !boardDetails.code) return;
@@ -2265,7 +2234,7 @@ export default function BoardRoomPage() {
       setCommentsError(null);
       setComposerValue("");
       setVisibility("EVERYONE");
-      setAnonymousMode(false); // Reset to default (OFF) when switching boards
+      setAnonymousMode(true); // Reset to default (ON) when switching boards
       setHasMoreMessages(true); // Reset when switching boards
       setSwitchingBoard(code); // Set loading state immediately
       pendingMessagesRef.current.clear();
@@ -2333,7 +2302,7 @@ export default function BoardRoomPage() {
     setBoardDetails(null);
     setMessages([]);
     setComposerValue("");
-    setAnonymousMode(false); // Reset to default (OFF)
+    setAnonymousMode(true); // Reset to default (ON)
     setVisibility("EVERYONE");
     setCreateDialogOpen(false);
     setJoinDialogOpen(false);
@@ -2450,8 +2419,7 @@ export default function BoardRoomPage() {
               onToggleAnonymous={setAnonymousMode}
               visibility={visibility}
               onChangeVisibility={setVisibility}
-              isAnonymousAllowed={boardDetails.anonymousEnabled}
-              canUseAdminOnly={isAdmin}
+              canUseAdminOnly={!isAdmin}
               isAdmin={isAdmin}
               readOnly={readOnly}
               disabled={!user || readOnly}
@@ -2490,7 +2458,6 @@ export default function BoardRoomPage() {
         board={boardDetails}
         isAdmin={isAdmin}
         isReadOnly={readOnly}
-        onToggleAnonymous={handleToggleAnonymous}
         onCopyInvite={handleCopyInvite}
         isVisible={Boolean(boardDetails)}
       />
@@ -2516,7 +2483,6 @@ export default function BoardRoomPage() {
               board={boardDetails}
               isAdmin={isAdmin}
               isReadOnly={readOnly}
-              onToggleAnonymous={handleToggleAnonymous}
               onCopyInvite={handleCopyInvite}
               isVisible
               variant="mobile"

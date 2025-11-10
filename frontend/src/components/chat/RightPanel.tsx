@@ -15,7 +15,6 @@ type RightPanelProps = {
   } | null;
   isAdmin: boolean;
   isReadOnly: boolean;
-  onToggleAnonymous: (enabled: boolean) => void;
   onCopyInvite: (code: string) => void;
   onClose?: () => void;
   isVisible: boolean;
@@ -28,7 +27,6 @@ export const RightPanel = ({
   board,
   isAdmin,
   isReadOnly,
-  onToggleAnonymous,
   onCopyInvite,
   onClose,
   isVisible,
@@ -129,34 +127,6 @@ export const RightPanel = ({
             You left this board. Rejoin to post new messages.
           </p>
         ) : null}
-      </section>
-
-      <section className="mt-6 rounded-2xl bg-slate-50 px-5 py-4 shadow-sm text-sm text-slate-600">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-900">Anonymous messages</h3>
-            <p className="text-xs text-slate-500">
-              When enabled, members can post without showing their names. Admins always see the real sender.
-            </p>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={board.anonymousEnabled}
-            aria-label="Toggle anonymous messaging"
-            disabled={!isAdmin || isReadOnly}
-            onClick={() => onToggleAnonymous(!board.anonymousEnabled)}
-            className={`relative ml-3 h-6 w-11 rounded-full transition ${
-              board.anonymousEnabled ? "bg-emerald-500" : "bg-slate-300"
-            } ${(isAdmin && !isReadOnly) ? "" : "cursor-not-allowed opacity-60"}`}
-          >
-            <span
-              className={`absolute top-1/2 h-4 w-4 -translate-y-1/2 rounded-full bg-white shadow transition-transform ${
-                board.anonymousEnabled ? "translate-x-6" : "translate-x-1"
-              }`}
-            />
-          </button>
-        </div>
       </section>
     </aside>
   );

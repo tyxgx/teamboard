@@ -51,19 +51,8 @@ async function legacyCreateComment(req: Request, res: Response) {
 
     const isAdmin = board.createdBy === req.user.id || membership.role === 'ADMIN';
 
-    if (visibility === 'ADMIN_ONLY' && !isAdmin) {
-      res.status(403).json({
-        message: 'Only admins can create admin-only comments',
-      });
-      return;
-    }
-
-    if (anonymous && !board.anonymousEnabled && !isAdmin) {
-      res.status(403).json({
-        message: 'Anonymous comments are disabled on this board',
-      });
-      return;
-    }
+    // Allow members to create admin-only messages (they can send messages only admins will see)
+    // Anonymous mode is always available - no need to check board.anonymousEnabled
 
     const comment = await prisma.comment.create({
       data: {
@@ -215,19 +204,8 @@ async function realtimeCreateComment(req: Request, res: Response) {
 
     const isAdmin = board.createdBy === req.user.id || membership.role === 'ADMIN';
 
-    if (visibility === 'ADMIN_ONLY' && !isAdmin) {
-      res.status(403).json({
-        message: 'Only admins can create admin-only comments',
-      });
-      return;
-    }
-
-    if (anonymous && !board.anonymousEnabled && !isAdmin) {
-      res.status(403).json({
-        message: 'Anonymous comments are disabled on this board',
-      });
-      return;
-    }
+    // Allow members to create admin-only messages (they can send messages only admins will see)
+    // Anonymous mode is always available - no need to check board.anonymousEnabled
 
     let comment: CommentWithAuthor | null = null;
     if (clientId) {

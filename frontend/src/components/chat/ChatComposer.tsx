@@ -10,7 +10,6 @@ type ChatComposerProps = {
   onToggleAnonymous: (value: boolean) => void;
   visibility: Visibility;
   onChangeVisibility: (value: Visibility) => void;
-  isAnonymousAllowed: boolean;
   canUseAdminOnly?: boolean;
   isAdmin?: boolean;
   disabled?: boolean;
@@ -26,7 +25,6 @@ export const ChatComposer = ({
   onToggleAnonymous,
   visibility,
   onChangeVisibility,
-  isAnonymousAllowed,
   canUseAdminOnly = true,
   isAdmin = false,
   disabled = false,
@@ -61,9 +59,8 @@ export const ChatComposer = ({
   };
 
   const toggleAnonymous = () => {
-    if (!isAnonymousAllowed || disabled || readOnly) return;
-    // Only allow disabling if user is admin
-    if (!anonymous && !isAdmin) return; // Prevent non-admins from disabling anonymous mode
+    if (disabled || readOnly) return;
+    // Anonymous mode is always available - users can toggle it on/off
     onToggleAnonymous(!anonymous);
   };
 
@@ -91,18 +88,18 @@ export const ChatComposer = ({
           <button
             type="button"
             onClick={toggleAnonymous}
-            disabled={!isAnonymousAllowed || disabled || readOnly}
+            disabled={disabled || readOnly}
             className={`flex h-10 w-10 items-center justify-center rounded-full text-lg transition hover:bg-slate-200 ${
               anonymous ? "bg-emerald-500 text-white" : "bg-slate-100 text-slate-600"
             } disabled:cursor-not-allowed disabled:opacity-60`}
             aria-label={anonymous ? "Disable anonymous" : "Enable anonymous"}
             aria-pressed={anonymous}
-            title={anonymous ? (isAdmin ? "Anonymous on (click to disable)" : "Anonymous on (only admins can disable)") : "Anonymous off"}
+            title={anonymous ? "Anonymous on (click to disable)" : "Anonymous off (click to enable)"}
           >
             🕶️
           </button>
 
-          {canUseAdminOnly && isAdmin ? (
+          {canUseAdminOnly && !isAdmin ? (
             <button
               type="button"
               onClick={toggleVisibility}
@@ -140,9 +137,6 @@ export const ChatComposer = ({
         </button>
       </div>
 
-      {!isAnonymousAllowed ? (
-        <p className="mx-auto mt-2 max-w-3xl text-xs text-slate-400">Admin has turned off anonymous messages.</p>
-      ) : null}
     </form>
   );
 };

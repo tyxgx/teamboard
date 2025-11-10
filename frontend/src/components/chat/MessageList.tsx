@@ -170,13 +170,20 @@ export const MessageList = ({
 
   const grouped = useMemo(() => {
     const buckets: Record<string, ChatMessage[]> = {};
-    messages.forEach((msg) => {
+    // Filter out ADMIN_ONLY messages for non-admin users
+    const filteredMessages = messages.filter((msg) => {
+      if (msg.visibility === "ADMIN_ONLY" && !isAdmin) {
+        return false; // Non-admins cannot see admin-only messages
+      }
+      return true;
+    });
+    filteredMessages.forEach((msg) => {
       const key = humanizeDate(msg.createdAt) || "";
       if (!buckets[key]) buckets[key] = [];
       buckets[key].push(msg);
     });
     return Object.entries(buckets);
-  }, [messages]);
+  }, [messages, isAdmin]);
 
   // TASK 2.2: Flatten grouped messages into a single array for virtualization
   // Each item is either a date header (type: 'header') or a message (type: 'message')
