@@ -1473,48 +1473,41 @@ export default function BoardRoomPage() {
       currentAckHandler = ackHandler;
       currentNewHandler = newHandler;
       
-      // CRITICAL: Register handlers directly - don't rely on wrapped handlers
-      // The test listener works, so register the app handler the same way
-      console.log("[rt] 🔵 About to register ackHandler on socket", {
-        ackHandlerType: typeof ackHandler,
-        ackHandlerName: ackHandler.name,
-        isWrapped: ackHandler !== handleMessageAck,
-        targetSocketId: targetSocket.id,
-      });
-      
-      // Register on the socket that actually receives events
-      targetSocket.on("message:new", newHandler);
-      targetSocket.on("message:ack", ackHandler);
-      
-      // Verify registration by checking if handler is in socket's event list
-      const ackListeners = (targetSocket as any)._events?.["message:ack"];
-      console.log("[rt] 🔵 After registration - ACK listeners on socket:", {
-        listenerCount: Array.isArray(ackListeners) ? ackListeners.length : (ackListeners ? 1 : 0),
-        listeners: ackListeners,
-        ourHandlerInList: Array.isArray(ackListeners) ? ackListeners.includes(ackHandler) : (ackListeners === ackHandler),
-      });
-      
-      // Add a test listener to verify events are received (this one works!)
-      const testListener = (payload: any) => {
-        alert("TEST LISTENER: message:ack received!");
-        console.log("🧪🧪🧪 TEST LISTENER: message:ack received!", payload);
-        // Also call the app handler directly to verify it works
-        console.log("🧪 Calling app handler directly from test listener...");
+      // CRITICAL: The test listener works, but the app handler doesn't get called by socket
+      // Solution: Make the test listener BE the app handler registration
+      // Since test listener works, use it as the primary handler
+      const primaryAckHandler = (payload: any) => {
+        // This is the handler that actually gets called by the socket
+        console.log("🔴🔴🔴 PRIMARY ACK HANDLER CALLED BY SOCKET", payload);
+        alert("PRIMARY ACK HANDLER CALLED!");
         try {
+          // Call the app's handler logic
           ackHandler(payload);
         } catch (error) {
-          console.error("🧪 Error calling app handler:", error);
+          console.error("❌ Error in primary ACK handler:", error);
+          alert("Error: " + error);
         }
       };
-      targetSocket.on("message:ack", testListener);
-      console.log("[rt] 🔵 Test listener added (this one works!)");
+      
+      // Register the primary handler (this one works!)
+      targetSocket.on("message:new", newHandler);
+      targetSocket.on("message:ack", primaryAckHandler);
+      
+      console.log("[rt] 🔵 Primary handlers registered", {
+        targetSocketId: targetSocket.id,
+        ackHandlerType: typeof primaryAckHandler,
+        newHandlerType: typeof newHandler,
+      });
+      
+      // Store the primary handler so we can remove it later
+      currentAckHandler = primaryAckHandler;
       
       // Verify handlers are actually registered
       const socketListeners = (targetSocket as any)._events || (targetSocket as any).listeners?.("message:ack");
-      console.log("[rt] 🔵 Handlers registered", {
+      console.log("[rt] 🔵 Primary handlers registered and verified", {
         targetSocketId: targetSocket.id,
-        handlerAckType: typeof ackHandler,
-        handlerNewType: typeof newHandler,
+        primaryAckHandlerType: typeof primaryAckHandler,
+        newHandlerType: typeof newHandler,
         storedReferences: { ack: !!currentAckHandler, new: !!currentNewHandler },
         socketHasListeners: !!socketListeners,
         listenerCount: Array.isArray(socketListeners) ? socketListeners.length : (socketListeners ? 1 : 0),
