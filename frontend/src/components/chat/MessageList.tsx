@@ -245,9 +245,20 @@ export const MessageList = ({
     const isOwnByName = comparableName && currentUserName ? comparableName === currentUserName : false;
     const isOwn = Boolean(isOwnById || isOwnByName);
     const createdAt = msg.createdAt ?? new Date().toISOString();
+    
+    // Group messages: reduce spacing if same sender and within 2 minutes
+    const prevItem = index > 0 ? virtualItems[index - 1] : null;
+    const prevMsg = prevItem?.message;
+    const isGrouped = prevMsg && 
+      !prevMsg.system &&
+      prevMsg.sender === msg.sender && 
+      prevMsg.userId === msg.userId &&
+      prevMsg.createdAt && 
+      new Date(createdAt).getTime() - new Date(prevMsg.createdAt).getTime() < 120000; // 2 minutes
+    const gap = isGrouped ? "gap-0.5" : "gap-1";
 
     return (
-      <div style={style} className="flex flex-col gap-1">
+      <div style={style} className={`flex flex-col ${gap}`}>
         <MessageBubble
           key={item.key}
           isOwn={isOwn}
@@ -278,7 +289,7 @@ export const MessageList = ({
     <div className="relative flex-1 overflow-hidden">
       {shouldVirtualize ? (
         // TASK 2.2: Virtualized rendering for large message lists
-        <div ref={containerRef} className="h-full bg-slate-50/50">
+        <div ref={containerRef} className="h-full bg-gradient-to-b from-slate-50 via-slate-50/80 to-slate-100/50">
           {/* Loading indicator for older messages */}
           {(isLoadingOlder || isLoadingOlderState) && messages.length > 0 && hasMoreMessages !== false ? (
             <div className="flex justify-center py-2">
@@ -312,7 +323,7 @@ export const MessageList = ({
         <div
           ref={containerRef}
           onScroll={updateNearBottom}
-          className="h-full overflow-y-auto bg-slate-50/50 py-4"
+          className="h-full overflow-y-auto bg-gradient-to-b from-slate-50 via-slate-50/80 to-slate-100/50 py-4"
           style={{ scrollBehavior: "smooth" }}
         >
           <div ref={topSentinelRef} />

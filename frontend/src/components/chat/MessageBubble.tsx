@@ -29,14 +29,14 @@ export const MessageBubble = React.memo(({
   const timeLabel = formatTime(timestamp);
   const alignment = isOwn ? "justify-end" : "justify-start";
   const bubbleColor = isOwn 
-    ? "bg-emerald-500 text-white" 
-    : "bg-slate-50 text-slate-900";
+    ? "bg-emerald-500 text-white shadow-sm" 
+    : "bg-white text-slate-900 shadow-sm";
   const displayName = isAnonymous ? "Anonymous" : authorName;
 
   return (
-    <div className={`flex w-full gap-2 px-4 ${alignment}`}>
+    <div className={`flex w-full gap-2 px-4 ${alignment} animate-[fadeIn_0.2s_ease-in]`}>
       <div
-        className={`max-w-[85%] rounded-2xl px-4 py-2.5 md:max-w-[70%] ${bubbleColor} ${
+        className={`max-w-[80%] rounded-2xl px-4 py-2.5 md:max-w-[75%] ${bubbleColor} ${
           isOwn ? "rounded-br-md" : "rounded-bl-md"
         }`}
         data-visibility={audience === "ADMIN_ONLY" ? "admin" : "everyone"}
@@ -64,19 +64,22 @@ export const MessageBubble = React.memo(({
           </div>
         )}
 
-        <div className={`wrap-anywhere text-[15px] leading-relaxed whitespace-pre-wrap ${
+        <div className={`wrap-anywhere text-base leading-6 whitespace-pre-wrap ${
           isOwn ? "text-white" : "text-slate-900"
         }`}>
           {children}
         </div>
 
-        {timeLabel ? (
+        {(timeLabel || isOwn) && (
           <div className={`mt-1.5 flex items-center gap-1.5 ${
             isOwn ? "justify-end text-emerald-50" : "justify-start text-slate-400"
           }`}>
-            <span className="text-[11px]">{timeLabel}</span>
+            {timeLabel && <span className="text-[11px]">{timeLabel}</span>}
+            {isOwn && (
+              <span className="text-[11px] opacity-70">✓</span>
+            )}
           </div>
-        ) : null}
+        )}
       </div>
     </div>
   );
