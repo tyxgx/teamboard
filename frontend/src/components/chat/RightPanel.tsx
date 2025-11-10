@@ -13,7 +13,6 @@ type RightPanelProps = {
     members: Member[];
     anonymousEnabled: boolean;
   } | null;
-  isAdmin: boolean;
   isReadOnly: boolean;
   onCopyInvite: (code: string) => void;
   onClose?: () => void;
@@ -25,7 +24,6 @@ const roleLabel = (role: "ADMIN" | "MEMBER") => (role === "ADMIN" ? "Admin" : "M
 
 export const RightPanel = ({
   board,
-  isAdmin,
   isReadOnly,
   onCopyInvite,
   onClose,

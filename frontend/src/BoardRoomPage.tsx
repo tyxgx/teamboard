@@ -2456,7 +2456,6 @@ export default function BoardRoomPage() {
 
       <RightPanel
         board={boardDetails}
-        isAdmin={isAdmin}
         isReadOnly={readOnly}
         onCopyInvite={handleCopyInvite}
         isVisible={Boolean(boardDetails)}
@@ -2481,7 +2480,6 @@ export default function BoardRoomPage() {
           <div className="h-full w-[85vw] max-w-[360px] bg-white" onClick={(event) => event.stopPropagation()}>
             <RightPanel
               board={boardDetails}
-              isAdmin={isAdmin}
               isReadOnly={readOnly}
               onCopyInvite={handleCopyInvite}
               isVisible
