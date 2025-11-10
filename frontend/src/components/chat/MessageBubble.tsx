@@ -67,7 +67,7 @@ export const MessageBubble = React.memo(({
         {/* Show ADMIN-ONLY badge on own messages too */}
         {isOwn && audience === "ADMIN_ONLY" && (
           <div className="mb-1.5 flex items-center justify-end gap-2">
-            <span className="rounded-full bg-slate-200/80 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/90">
+            <span className="rounded-full bg-white/20 backdrop-blur-sm border border-white/30 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
               ADMIN-ONLY
             </span>
           </div>
