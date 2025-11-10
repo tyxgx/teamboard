@@ -1473,17 +1473,41 @@ export default function BoardRoomPage() {
       currentAckHandler = ackHandler;
       currentNewHandler = newHandler;
       
-      // CRITICAL: Add a test listener FIRST to verify events are received
-      const testListener = (payload: any) => {
-        alert("TEST LISTENER: message:ack received!");
-        console.log("🧪🧪🧪 TEST LISTENER: message:ack received!", payload);
-      };
-      targetSocket.on("message:ack", testListener);
-      console.log("[rt] 🔵 Test listener added to verify events are received");
+      // CRITICAL: Register handlers directly - don't rely on wrapped handlers
+      // The test listener works, so register the app handler the same way
+      console.log("[rt] 🔵 About to register ackHandler on socket", {
+        ackHandlerType: typeof ackHandler,
+        ackHandlerName: ackHandler.name,
+        isWrapped: ackHandler !== handleMessageAck,
+        targetSocketId: targetSocket.id,
+      });
       
       // Register on the socket that actually receives events
       targetSocket.on("message:new", newHandler);
       targetSocket.on("message:ack", ackHandler);
+      
+      // Verify registration by checking if handler is in socket's event list
+      const ackListeners = (targetSocket as any)._events?.["message:ack"];
+      console.log("[rt] 🔵 After registration - ACK listeners on socket:", {
+        listenerCount: Array.isArray(ackListeners) ? ackListeners.length : (ackListeners ? 1 : 0),
+        listeners: ackListeners,
+        ourHandlerInList: Array.isArray(ackListeners) ? ackListeners.includes(ackHandler) : (ackListeners === ackHandler),
+      });
+      
+      // Add a test listener to verify events are received (this one works!)
+      const testListener = (payload: any) => {
+        alert("TEST LISTENER: message:ack received!");
+        console.log("🧪🧪🧪 TEST LISTENER: message:ack received!", payload);
+        // Also call the app handler directly to verify it works
+        console.log("🧪 Calling app handler directly from test listener...");
+        try {
+          ackHandler(payload);
+        } catch (error) {
+          console.error("🧪 Error calling app handler:", error);
+        }
+      };
+      targetSocket.on("message:ack", testListener);
+      console.log("[rt] 🔵 Test listener added (this one works!)");
       
       // Verify handlers are actually registered
       const socketListeners = (targetSocket as any)._events || (targetSocket as any).listeners?.("message:ack");
