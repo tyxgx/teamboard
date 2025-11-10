@@ -2419,7 +2419,6 @@ export default function BoardRoomPage() {
               onToggleAnonymous={setAnonymousMode}
               visibility={visibility}
               onChangeVisibility={setVisibility}
-              canUseAdminOnly={!isAdmin}
               isAdmin={isAdmin}
               readOnly={readOnly}
               disabled={!user || readOnly}

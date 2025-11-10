@@ -10,7 +10,6 @@ type ChatComposerProps = {
   onToggleAnonymous: (value: boolean) => void;
   visibility: Visibility;
   onChangeVisibility: (value: Visibility) => void;
-  canUseAdminOnly?: boolean;
   isAdmin?: boolean;
   disabled?: boolean;
   readOnly?: boolean;
@@ -25,7 +24,6 @@ export const ChatComposer = ({
   onToggleAnonymous,
   visibility,
   onChangeVisibility,
-  canUseAdminOnly = true,
   isAdmin = false,
   disabled = false,
   readOnly = false,
@@ -65,7 +63,9 @@ export const ChatComposer = ({
   };
 
   const toggleVisibility = () => {
-    if (disabled || readOnly || !canUseAdminOnly) return;
+    if (disabled || readOnly) return;
+    // Only allow members (not admins) to use admin-only feature
+    if (isAdmin) return;
     onChangeVisibility(visibility === "EVERYONE" ? "ADMIN_ONLY" : "EVERYONE");
   };
 
@@ -99,7 +99,7 @@ export const ChatComposer = ({
             🕶️
           </button>
 
-          {canUseAdminOnly && !isAdmin ? (
+          {!isAdmin ? (
             <button
               type="button"
               onClick={toggleVisibility}
@@ -109,7 +109,7 @@ export const ChatComposer = ({
               } disabled:cursor-not-allowed disabled:opacity-60`}
               aria-label={visibility === "ADMIN_ONLY" ? "Send to everyone" : "Send to admins only"}
               aria-pressed={visibility === "ADMIN_ONLY"}
-              title={visibility === "ADMIN_ONLY" ? "Admin only" : "Everyone"}
+              title={visibility === "ADMIN_ONLY" ? "Admin only (only admins will see this)" : "Everyone (click to send to admins only)"}
             >
               🛡️
             </button>
