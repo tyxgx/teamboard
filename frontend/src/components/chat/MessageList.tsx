@@ -259,9 +259,12 @@ export const MessageList = ({
         >
           <span>{msg.message}</span>
           {msg.status === "sending" ? (
-            <span className="ml-2 align-middle text-[10px] text-slate-400">sending…</span>
+            <span className="ml-2 inline-flex items-center text-[11px] opacity-60">
+              <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>
+              sending
+            </span>
           ) : msg.status === "sent" ? (
-            <span className="ml-2 align-middle text-[10px] text-slate-300">✓</span>
+            <span className="ml-2 inline-flex items-center text-[11px] opacity-70">✓</span>
           ) : null}
           {msg.status === "failed" ? (
             <span className="ml-2 align-middle text-[10px] text-red-500">failed</span>
@@ -275,7 +278,7 @@ export const MessageList = ({
     <div className="relative flex-1 overflow-hidden">
       {shouldVirtualize ? (
         // TASK 2.2: Virtualized rendering for large message lists
-        <div ref={containerRef} className="h-full bg-white">
+        <div ref={containerRef} className="h-full bg-slate-50/50">
           {/* Loading indicator for older messages */}
           {(isLoadingOlder || isLoadingOlderState) && messages.length > 0 && hasMoreMessages !== false ? (
             <div className="flex justify-center py-2">
@@ -309,7 +312,7 @@ export const MessageList = ({
         <div
           ref={containerRef}
           onScroll={updateNearBottom}
-          className="h-full overflow-y-auto bg-white px-3 py-4 md:px-6 md:py-6"
+          className="h-full overflow-y-auto bg-slate-50/50 py-4"
           style={{ scrollBehavior: "smooth" }}
         >
           <div ref={topSentinelRef} />
