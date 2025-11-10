@@ -1228,19 +1228,20 @@ export default function BoardRoomPage() {
     socketClient.on("user-joined", handleUserJoined);
     socketClient.on("user-left", handleUserLeft);
 
-    const rtmEnabled = isRealtimeMessagingEnabled();
-    
-    // Log RTM status
-    console.log("[rt] RTM Status Check:", {
-      rtmEnabled,
-      envVar: import.meta.env.VITE_RTM_ENABLED,
-      localStorage: localStorage.getItem("tb.rtm"),
-      socketConnected: getSocketConnectionState(),
-      socketId: socketClient.id,
-    });
-
     // Register RTM listeners (message:new, message:ack) - these must persist across reconnects
+    // IMPORTANT: Check RTM status inside the function, not from closure, so it's always current
     const registerRTMListeners = () => {
+      const rtmEnabled = isRealtimeMessagingEnabled();
+      
+      // Log RTM status
+      console.log("[rt] RTM Status Check:", {
+        rtmEnabled,
+        envVar: import.meta.env.VITE_RTM_ENABLED,
+        localStorage: localStorage.getItem("tb.rtm"),
+        socketConnected: getSocketConnectionState(),
+        socketId: socketClient.id,
+      });
+      
       if (!rtmEnabled) {
         console.warn("[rt] ⚠️ RTM is disabled - listeners not registered", {
           envVar: import.meta.env.VITE_RTM_ENABLED,
