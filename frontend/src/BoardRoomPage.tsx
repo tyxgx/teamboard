@@ -1371,13 +1371,61 @@ export default function BoardRoomPage() {
         console.log("[rt] 🔵 Test function available: window.__testRTMHandlers('message:ack', payload)");
       }
       
+      // CRITICAL: Store handler references to verify they're actually registered
+      const registeredHandlers = {
+        messageNew: handleMessageNew,
+        messageAck: handleMessageAck,
+      };
+      
+      console.log("[rt] 🔵 Registering handlers on socket", {
+        socketId: socketClient.id,
+        socketConnected: socketClient.connected,
+        handlerRefs: registeredHandlers,
+      });
+      
+      // CRITICAL: Verify socketClient is the same as window.__socket__
+      const isSameSocket = socketClient === (typeof window !== 'undefined' ? (window as any).__socket__ : null);
+      console.log("[rt] 🔵 Socket instance check", {
+        socketClientId: socketClient.id,
+        windowSocketId: (typeof window !== 'undefined' && (window as any).__socket__) ? (window as any).__socket__.id : 'N/A',
+        isSameInstance: isSameSocket,
+      });
+      
       socketClient.on("message:new", handleMessageNew);
       socketClient.on("message:ack", handleMessageAck);
       
       console.log("[rt] 🔵 Handlers registered on socket", {
         socketId: socketClient.id,
         socketConnected: socketClient.connected,
+        handlerNew: handleMessageNew,
+        handlerAck: handleMessageAck,
       });
+      
+      // Immediately test if handlers are callable
+      console.log("[rt] 🔵 Testing handlers directly...");
+      try {
+        const testPayload = { boardCode: 'test', clientId: 'test', id: 'test', createdAt: new Date().toISOString() };
+        console.log("[rt] 🔵 Calling handleMessageAck directly with test payload");
+        handleMessageAck(testPayload);
+        console.log("[rt] ✅ Handler is callable");
+      } catch (error) {
+        console.error("[rt] ❌ Handler error:", error);
+      }
+      
+      // Verify handlers are still on socket after a short delay
+      setTimeout(() => {
+        console.log("[rt] 🔵 Verification: Checking if handlers are still registered", {
+          socketId: socketClient.id,
+          socketConnected: socketClient.connected,
+        });
+        // Test by adding another listener to see if events are still flowing
+        const verifyHandler = (data: any) => {
+          console.log("[rt] ✅ VERIFY: Handler still receiving events!", data);
+          socketClient.off("message:ack", verifyHandler);
+        };
+        socketClient.on("message:ack", verifyHandler);
+        console.log("[rt] 🔵 Verification listener added - send a message to test");
+      }, 1000);
       
       // Verify handlers are actually on the socket by checking listeners
       // Note: socket.io doesn't expose hasListeners, so we'll test by emitting a test event
