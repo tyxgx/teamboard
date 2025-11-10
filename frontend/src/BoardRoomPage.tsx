@@ -2097,27 +2097,29 @@ export default function BoardRoomPage() {
         .map((result: { boardId: string }) => result.boardId);
       
       if (deletedBoardIds.length > 0) {
+        // Get board info before removing from state
+        const deletedBoards = boards.filter((b) => deletedBoardIds.includes(b.id));
+        
+        // Remove boards from state immediately
         setBoards((prev) => prev.filter((board) => !deletedBoardIds.includes(board.id)));
         
         // Clean up state for deleted boards
-        deletedBoardIds.forEach((boardId: string) => {
-          const board = boards.find((b) => b.id === boardId);
-          if (board) {
-            applyUnread(board.code, () => 0);
-            if (boardDetails?.code === board.code) {
-              if (activeRoomRef.current === board.code) {
-                activeRoomRef.current = null;
-              }
-              delete lastReceivedRef.current[board.code];
-              delete lastDeltaRunRef.current[board.code];
-              realtimeService.clearRoom();
-              setRightPanelOpen(false);
-              navigate("/app");
+        deletedBoards.forEach((board) => {
+          applyUnread(board.code, () => 0);
+          if (boardDetails?.code === board.code) {
+            if (activeRoomRef.current === board.code) {
+              activeRoomRef.current = null;
             }
+            delete lastReceivedRef.current[board.code];
+            delete lastDeltaRunRef.current[board.code];
+            realtimeService.clearRoom();
+            setRightPanelOpen(false);
+            navigate("/app");
           }
         });
       }
 
+      // Reload boards list to ensure consistency (but state update above ensures immediate removal)
       debouncedLoadBoards();
       if (successCount < modal.boardIds.length) {
         console.warn(`Only ${successCount} of ${modal.boardIds.length} boards were deleted`);
