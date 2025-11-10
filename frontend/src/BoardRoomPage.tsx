@@ -1471,7 +1471,7 @@ export default function BoardRoomPage() {
           const s = socketClient;
           console.log("Socket ID:", s.id);
           console.log("Socket connected:", s.connected);
-          console.log("Handlers exist:", !!window.__rtmHandlers);
+          console.log("Handlers exist:", !!(window as any).__rtmHandlers);
           console.log("Test: Add a temporary listener to see if events are received");
           
           // Add a one-time test listener
