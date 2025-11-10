@@ -242,11 +242,40 @@ export default function BoardRoomPage() {
   useEffect(() => {
     // Initialize socket connection immediately
     initRealtimeService();
-    setSocketConnected(getSocketConnectionState());
+    const initialConnected = getSocketConnectionState();
+    setSocketConnected(initialConnected);
+    
+    // Log initial connection state
+    if (initialConnected) {
+      console.log("[rt] ✅ Socket connected on mount");
+    } else {
+      console.warn("[rt] ⚠️ Socket not connected on mount - will retry");
+      // Retry connection after a short delay
+      const retryTimeout = setTimeout(() => {
+        const retryConnected = getSocketConnectionState();
+        if (!retryConnected) {
+          console.warn("[rt] ⚠️ Socket still not connected after retry");
+          // Try to manually connect if socket is available
+          if (typeof window !== "undefined" && (window as any).__socket__) {
+            (window as any).__socket__.connect();
+          }
+        } else {
+          console.log("[rt] ✅ Socket connected after retry");
+          setSocketConnected(true);
+        }
+      }, 2000);
+      
+      return () => clearTimeout(retryTimeout);
+    }
     
     // Monitor socket connection state
     const cleanup = onConnectionChange((connected) => {
       setSocketConnected(connected);
+      if (connected) {
+        console.log("[rt] ✅ Socket connection restored");
+      } else {
+        console.warn("[rt] ⚠️ Socket connection lost");
+      }
       // Rejoin room when connection is restored (handled in separate effect)
     });
     

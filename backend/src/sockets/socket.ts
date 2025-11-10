@@ -20,16 +20,27 @@ export function setupSocket(server: http.Server) {
   const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || "*";
   const LOG_LEVEL = process.env.SOCKET_LOG_LEVEL || (process.env.NODE_ENV === "production" ? "error" : "debug");
   
+  // Log CORS configuration for debugging
+  const corsOrigins = FRONTEND_ORIGIN === "*" ? true : FRONTEND_ORIGIN.split(",").map((s) => s.trim());
+  if (process.env.NODE_ENV !== "production" || LOG_LEVEL === "debug") {
+    console.log("[socket] CORS origins:", corsOrigins);
+    console.log("[socket] FRONTEND_ORIGIN env:", FRONTEND_ORIGIN);
+  }
+  
   ioInstance = new Server(server, {
     cors: {
-      origin: FRONTEND_ORIGIN === "*" ? true : FRONTEND_ORIGIN.split(",").map((s) => s.trim()),
+      origin: corsOrigins,
       methods: ["GET", "POST"],
       credentials: true,
+      // Explicitly allow WebSocket upgrades
+      allowedHeaders: ["Authorization", "Content-Type"],
     },
     transports: ["websocket", "polling"],
     pingTimeout: 20000,
     pingInterval: 25000,
     allowEIO3: true,
+    // Enable CORS for WebSocket handshake
+    allowUpgrades: true,
   });
 
   const io = getIO();
@@ -81,12 +92,18 @@ export function setupSocket(server: http.Server) {
     });
   });
   
-  // Log connection errors
+  // Log connection errors (always log for debugging)
   io.engine.on("connection_error", (err) => {
-    if (LOG_LEVEL === "debug" || process.env.NODE_ENV !== "production") {
-      console.error("Socket.io connection error:", err);
+    console.error("[socket] ❌ Connection error:", err.message || err);
+    if (err.message?.includes("CORS")) {
+      console.error("[socket] ⚠️ CORS error - check FRONTEND_ORIGIN includes client origin");
     }
   });
+  
+  // Log successful setup
+  console.log("[socket] ✅ Socket.io server initialized");
+  console.log("[socket] Transports:", ["websocket", "polling"]);
+  console.log("[socket] RTM enabled:", process.env.RTM_ENABLED === "true");
 }
 
 export function isSocketConnected(): boolean {

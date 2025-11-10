@@ -171,10 +171,12 @@ type CommentWithAuthor = Prisma.CommentGetPayload<{
 }>;
 
 async function realtimeCreateComment(req: Request, res: Response) {
+  const startTime = Date.now();
   const { content, visibility, boardId, anonymous = false, clientMessageId } = req.body;
   const clientId = typeof clientMessageId === 'string' && clientMessageId.trim().length > 0 ? clientMessageId.trim() : undefined;
 
   try {
+    const boardQueryStart = Date.now();
     const board = await prisma.board.findUnique({
       where: { id: boardId },
       select: {
@@ -184,13 +186,23 @@ async function realtimeCreateComment(req: Request, res: Response) {
         anonymousEnabled: true,
       },
     });
+    const boardQueryTime = Date.now() - boardQueryStart;
+    if (boardQueryTime > 100) {
+      console.warn(`[perf] Board query took ${boardQueryTime}ms`);
+    }
 
     if (!board) {
       res.status(404).json({ message: 'Board not found' });
       return;
     }
 
+    const membershipQueryStart = Date.now();
     const membership = await getMembership(req.user.id, boardId);
+    const membershipQueryTime = Date.now() - membershipQueryStart;
+    if (membershipQueryTime > 100) {
+      console.warn(`[perf] Membership query took ${membershipQueryTime}ms`);
+    }
+    
     if (!membership) {
       res.status(403).json({ message: 'You are not a member of this board' });
       return;
@@ -219,6 +231,7 @@ async function realtimeCreateComment(req: Request, res: Response) {
 
     let comment: CommentWithAuthor | null = null;
     if (clientId) {
+      const duplicateCheckStart = Date.now();
       comment = await prisma.comment.findFirst({
         where: { boardId, clientId },
         include: {
@@ -230,11 +243,16 @@ async function realtimeCreateComment(req: Request, res: Response) {
           },
         },
       });
+      const duplicateCheckTime = Date.now() - duplicateCheckStart;
+      if (duplicateCheckTime > 100) {
+        console.warn(`[perf] Duplicate check query took ${duplicateCheckTime}ms`);
+      }
     }
 
     let createdNew = false;
     if (!comment) {
       try {
+        const createStart = Date.now();
         comment = await prisma.comment.create({
           data: {
             content,
@@ -253,6 +271,10 @@ async function realtimeCreateComment(req: Request, res: Response) {
             },
           },
         });
+        const createTime = Date.now() - createStart;
+        if (createTime > 200) {
+          console.warn(`[perf] Comment create took ${createTime}ms`);
+        }
         createdNew = true;
       } catch (error) {
         if (clientId && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
@@ -285,6 +307,7 @@ async function realtimeCreateComment(req: Request, res: Response) {
       const previewSource = content.trim().length > 0 ? content.trim() : content;
       const preview = previewSource.slice(0, 140);
 
+      const boardUpdateStart = Date.now();
       const updatedBoard = await prisma.board.update({
         where: { id: boardId },
         data: {
@@ -307,6 +330,10 @@ async function realtimeCreateComment(req: Request, res: Response) {
           lastCommentSenderName: true,
         },
       });
+      const boardUpdateTime = Date.now() - boardUpdateStart;
+      if (boardUpdateTime > 200) {
+        console.warn(`[perf] Board update took ${boardUpdateTime}ms`);
+      }
 
       try {
         const roomSockets = await io.in(room).fetchSockets();
@@ -368,6 +395,15 @@ async function realtimeCreateComment(req: Request, res: Response) {
       console.error('❌ Socket ACK emit error:', error);
     }
 
+    const totalTime = Date.now() - startTime;
+    if (totalTime > 1000) {
+      console.warn(`[perf] ⚠️ Total comment create took ${totalTime}ms (SLOW)`);
+    } else if (totalTime > 500) {
+      console.warn(`[perf] Comment create took ${totalTime}ms`);
+    } else if (process.env.NODE_ENV !== 'production') {
+      console.log(`[perf] Comment create took ${totalTime}ms`);
+    }
+
     res.status(createdNew ? 201 : 200).json({
       ...comment,
       clientId: clientId ?? null,
@@ -375,6 +411,8 @@ async function realtimeCreateComment(req: Request, res: Response) {
       createdAt: comment.createdAt,
     });
   } catch (error) {
+    const totalTime = Date.now() - startTime;
+    console.error(`[perf] ❌ Error after ${totalTime}ms:`, error);
     console.error('❌ Error creating realtime comment:', error);
     res.status(500).json({ message: 'Error creating comment' });
   }
