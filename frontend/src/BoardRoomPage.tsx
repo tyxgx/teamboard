@@ -1006,6 +1006,12 @@ export default function BoardRoomPage() {
   }, [boardDetails?.code, boardDetails?.id, fetchDeltaForBoard, readOnly]);
 
   useEffect(() => {
+    console.log("[rt] 🔵 useEffect for socket listeners is running", {
+      activeBoardCode,
+      hasBoardDetails: !!boardDetails,
+      timestamp: new Date().toISOString(),
+    });
+    
     const handleReceiveMessage = (payload: any) => {
       console.log("[rt] 📩 Received message event (receive-message or message:new)", payload);
       const targetCode = payload.boardCode ?? activeBoardCode ?? null;
@@ -1311,7 +1317,14 @@ export default function BoardRoomPage() {
     };
 
     // Register listeners immediately
+    console.log("[rt] 🔵 About to call registerRTMListeners()");
     registerRTMListeners();
+
+    // Expose manual registration function for debugging
+    if (typeof window !== 'undefined') {
+      (window as any).__registerRTMListeners = registerRTMListeners;
+      console.log("[rt] 🔧 Manual registration function available: window.__registerRTMListeners()");
+    }
 
     // Re-register on reconnect to ensure they persist
     const handleReconnect = () => {
@@ -1321,6 +1334,7 @@ export default function BoardRoomPage() {
 
     const handleConnect = () => {
       // Also register on initial connect (in case reconnect didn't fire)
+      console.log("[rt] 🔵 Socket connected, registering RTM listeners");
       registerRTMListeners();
     };
 
