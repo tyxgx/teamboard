@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, useCallback, memo } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
@@ -35,7 +35,7 @@ const FeatureIcons = {
 };
 
 // Memoized Feature Card Component (performance)
-const FeatureCard = memo(({ icon, title, description, delay }: { icon: JSX.Element; title: string; description: string; delay: number }) => {
+const FeatureCard = memo(({ icon, title, description, delay }: { icon: React.ReactElement; title: string; description: string; delay: number }) => {
   const [isVisible, setIsVisible] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
