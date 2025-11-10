@@ -49,6 +49,9 @@ export function setupSocket(server: http.Server) {
         console.log(`📥 ${name} joined board: ${boardCode}`);
       }
       socket.to(boardCode).emit("user-joined", { name });
+      if (process.env.RTM_ENABLED === "true") {
+        socket.to(boardCode).emit("system:join", { name, boardCode, at: new Date().toISOString() });
+      }
       socket.emit("joined-room", { boardCode });
     });
 
@@ -63,8 +66,18 @@ export function setupSocket(server: http.Server) {
           console.log(`❌ ${user.name} disconnected from board: ${user.boardCode}, reason: ${reason}`);
         }
         socket.to(user.boardCode).emit("user-left", { name: user.name });
+        if (process.env.RTM_ENABLED === "true") {
+          socket.to(user.boardCode).emit("system:leave", { name: user.name, boardCode: user.boardCode, at: new Date().toISOString() });
+        }
         userMap.delete(socket.id);
       }
+    });
+
+    socket.on("read:upto", (payload: { boardCode: string; cursor?: string; cursorId?: string }) => {
+      if (process.env.RTM_ENABLED !== "true") return;
+      const { boardCode, cursor, cursorId } = payload || {};
+      if (!boardCode) return;
+      socket.to(boardCode).emit("read:upto", { boardCode, cursor: cursor ?? null, cursorId: cursorId ?? null, at: new Date().toISOString() });
     });
   });
   

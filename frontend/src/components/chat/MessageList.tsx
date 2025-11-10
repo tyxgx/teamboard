@@ -15,6 +15,7 @@ export type ChatMessage = {
   system?: boolean;
   userId?: string;
   senderId?: string;
+  status?: "sending" | "sent" | "failed";
 };
 
 type MessageListProps = {
@@ -256,7 +257,13 @@ export const MessageList = ({
           actualSender={actualName}
           timestamp={createdAt}
         >
-          {msg.message}
+          <span>{msg.message}</span>
+          {msg.status === "sending" ? (
+            <span className="ml-2 align-middle text-[10px] text-slate-400">sending…</span>
+          ) : null}
+          {msg.status === "failed" ? (
+            <span className="ml-2 align-middle text-[10px] text-red-500">failed</span>
+          ) : null}
         </MessageBubble>
       </div>
     );
@@ -373,7 +380,13 @@ export const MessageList = ({
                           actualSender={actualName}
                           timestamp={createdAt}
                         >
-                          {msg.message}
+                          <span>{msg.message}</span>
+                          {msg.status === "sending" ? (
+                            <span className="ml-2 align-middle text-[10px] text-slate-400">sending…</span>
+                          ) : null}
+                          {msg.status === "failed" ? (
+                            <span className="ml-2 align-middle text-[10px] text-red-500">failed</span>
+                          ) : null}
                         </MessageBubble>
                       );
                     })}

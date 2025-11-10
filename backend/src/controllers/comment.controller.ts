@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db/client';
 import { getIO } from '../sockets/socket';
 
@@ -13,7 +14,17 @@ async function getMembership(userId: string, boardId: string) {
   });
 }
 
+const rtmEnabledFlag = () => process.env.RTM_ENABLED === 'true';
+
 export const createComment = async (req: Request, res: Response) => {
+  const rtmEnabled = rtmEnabledFlag();
+  if (!rtmEnabled) {
+    return legacyCreateComment(req, res);
+  }
+  return realtimeCreateComment(req, res);
+};
+
+async function legacyCreateComment(req: Request, res: Response) {
   try {
     const { content, visibility, boardId, anonymous = false, clientMessageId } = req.body;
 
@@ -40,7 +51,6 @@ export const createComment = async (req: Request, res: Response) => {
 
     const isAdmin = board.createdBy === req.user.id || membership.role === 'ADMIN';
 
-    // Only board admins can create ADMIN_ONLY comments
     if (visibility === 'ADMIN_ONLY' && !isAdmin) {
       res.status(403).json({
         message: 'Only admins can create admin-only comments',
@@ -85,6 +95,7 @@ export const createComment = async (req: Request, res: Response) => {
         lastCommentVisibility: comment.visibility,
         lastCommentAnonymous: comment.anonymous,
         lastCommentSenderId: req.user.id,
+        lastCommentSenderName: comment.createdBy.name,
       },
       select: {
         code: true,
@@ -94,6 +105,7 @@ export const createComment = async (req: Request, res: Response) => {
         lastCommentVisibility: true,
         lastCommentAnonymous: true,
         lastCommentSenderId: true,
+        lastCommentSenderName: true,
       },
     });
 
@@ -101,10 +113,9 @@ export const createComment = async (req: Request, res: Response) => {
       const io = getIO();
       const room = updatedBoard.code;
       
-      // Verify there are connected clients before emitting
       const roomSockets = await io.in(room).fetchSockets();
       if (roomSockets.length === 0) {
-        if (process.env.NODE_ENV !== "production") {
+        if (process.env.NODE_ENV !== 'production') {
           console.warn(`⚠️ No connected clients in room: ${room}`);
         }
       }
@@ -112,7 +123,6 @@ export const createComment = async (req: Request, res: Response) => {
       const senderDisplay = comment.anonymous ? 'Anonymous' : comment.createdBy.name;
       const actualSender = comment.anonymous ? comment.createdBy.name : undefined;
 
-      // Emit board activity update
       io.to(room).emit('board-activity', {
         boardCode: updatedBoard.code,
         lastActivity: updatedBoard.lastActivity.toISOString(),
@@ -121,10 +131,9 @@ export const createComment = async (req: Request, res: Response) => {
         lastCommentVisibility: updatedBoard.lastCommentVisibility,
         lastCommentAnonymous: updatedBoard.lastCommentAnonymous,
         lastCommentSenderId: updatedBoard.lastCommentSenderId,
-        lastCommentSenderName: comment.createdBy.name,
+        lastCommentSenderName: updatedBoard.lastCommentSenderName ?? comment.createdBy.name,
       });
 
-      // Emit message with delivery verification
       io.to(room).emit('receive-message', {
         id: comment.id,
         boardCode: updatedBoard.code,
@@ -136,25 +145,482 @@ export const createComment = async (req: Request, res: Response) => {
         senderId: req.user.id,
         clientMessageId: clientMessageId ?? null,
       });
-      
-      if (process.env.NODE_ENV !== "production") {
-        console.log(`📤 Emitted message to room ${room}, ${roomSockets.length} clients`);
-      }
     } catch (error) {
       console.error('❌ Socket emit error:', error);
-      // Don't fail the request if socket emit fails - message is already saved
     }
 
     res.status(201).json({
       ...comment,
       createdAt: comment.createdAt,
+      clientMessageId: clientMessageId ?? null,
     });
   } catch (error) {
     res.status(500).json({ message: 'Error creating comment' });
   }
-};
+}
+
+type CommentWithAuthor = Prisma.CommentGetPayload<{
+  include: {
+    createdBy: {
+      select: {
+        id: true;
+        name: true;
+      };
+    };
+  };
+}>;
+
+async function realtimeCreateComment(req: Request, res: Response) {
+  const { content, visibility, boardId, anonymous = false, clientMessageId } = req.body;
+  const clientId = typeof clientMessageId === 'string' && clientMessageId.trim().length > 0 ? clientMessageId.trim() : undefined;
+
+  try {
+    const board = await prisma.board.findUnique({
+      where: { id: boardId },
+      select: {
+        id: true,
+        code: true,
+        createdBy: true,
+        anonymousEnabled: true,
+      },
+    });
+
+    if (!board) {
+      res.status(404).json({ message: 'Board not found' });
+      return;
+    }
+
+    const membership = await getMembership(req.user.id, boardId);
+    if (!membership) {
+      res.status(403).json({ message: 'You are not a member of this board' });
+      return;
+    }
+
+    if (membership.status !== 'ACTIVE') {
+      res.status(403).json({ message: 'You left this board. Rejoin to post.' });
+      return;
+    }
+
+    const isAdmin = board.createdBy === req.user.id || membership.role === 'ADMIN';
+
+    if (visibility === 'ADMIN_ONLY' && !isAdmin) {
+      res.status(403).json({
+        message: 'Only admins can create admin-only comments',
+      });
+      return;
+    }
+
+    if (anonymous && !board.anonymousEnabled && !isAdmin) {
+      res.status(403).json({
+        message: 'Anonymous comments are disabled on this board',
+      });
+      return;
+    }
+
+    let comment: CommentWithAuthor | null = null;
+    if (clientId) {
+      comment = await prisma.comment.findFirst({
+        where: { boardId, clientId },
+        include: {
+          createdBy: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
+      });
+    }
+
+    let createdNew = false;
+    if (!comment) {
+      try {
+        comment = await prisma.comment.create({
+          data: {
+            content,
+            visibility,
+            createdById: req.user.id,
+            boardId,
+            anonymous,
+            clientId,
+          },
+          include: {
+            createdBy: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        });
+        createdNew = true;
+      } catch (error) {
+        if (clientId && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+          comment = await prisma.comment.findFirst({
+            where: { boardId, clientId },
+            include: {
+              createdBy: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          });
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    if (!comment) {
+      res.status(500).json({ message: 'Unable to create comment' });
+      return;
+    }
+
+    const io = getIO();
+    const room = board.code;
+
+    if (createdNew) {
+      const previewSource = content.trim().length > 0 ? content.trim() : content;
+      const preview = previewSource.slice(0, 140);
+
+      const updatedBoard = await prisma.board.update({
+        where: { id: boardId },
+        data: {
+          lastActivity: comment.createdAt,
+          lastCommentAt: comment.createdAt,
+          lastCommentPreview: preview,
+          lastCommentVisibility: comment.visibility,
+          lastCommentAnonymous: comment.anonymous,
+          lastCommentSenderId: req.user.id,
+          lastCommentSenderName: comment.createdBy.name,
+        },
+        select: {
+          code: true,
+          lastActivity: true,
+          lastCommentAt: true,
+          lastCommentPreview: true,
+          lastCommentVisibility: true,
+          lastCommentAnonymous: true,
+          lastCommentSenderId: true,
+          lastCommentSenderName: true,
+        },
+      });
+
+      try {
+        const roomSockets = await io.in(room).fetchSockets();
+        if (roomSockets.length === 0 && process.env.NODE_ENV !== 'production') {
+          console.warn(`⚠️ No connected clients in room: ${room}`);
+        }
+
+        const senderDisplay = comment.anonymous ? 'Anonymous' : comment.createdBy.name;
+        const actualSender = comment.anonymous ? comment.createdBy.name : undefined;
+
+        io.to(room).emit('board-activity', {
+          boardCode: updatedBoard.code,
+          lastActivity: updatedBoard.lastActivity.toISOString(),
+          lastCommentPreview: updatedBoard.lastCommentPreview,
+          lastCommentAt: updatedBoard.lastCommentAt ? updatedBoard.lastCommentAt.toISOString() : null,
+          lastCommentVisibility: updatedBoard.lastCommentVisibility,
+          lastCommentAnonymous: updatedBoard.lastCommentAnonymous,
+          lastCommentSenderId: updatedBoard.lastCommentSenderId,
+          lastCommentSenderName: updatedBoard.lastCommentSenderName ?? comment.createdBy.name,
+        });
+
+        io.to(room).emit('receive-message', {
+          id: comment.id,
+          boardCode: updatedBoard.code,
+          message: comment.content,
+          visibility: comment.visibility,
+          sender: senderDisplay,
+          actualSender,
+          createdAt: comment.createdAt.toISOString(),
+          senderId: req.user.id,
+          clientMessageId: clientId ?? null,
+        });
+
+        io.to(room).emit('message:new', {
+          id: comment.id,
+          boardCode: updatedBoard.code,
+          message: comment.content,
+          visibility: comment.visibility,
+          sender: senderDisplay,
+          actualSender,
+          createdAt: comment.createdAt.toISOString(),
+          senderId: req.user.id,
+          clientId: clientId ?? null,
+        });
+      } catch (error) {
+        console.error('❌ Socket emit error:', error);
+      }
+    }
+
+    // Always emit ack so clients can reconcile optimistic messages
+    try {
+      io.to(room).emit('message:ack', {
+        boardCode: room,
+        clientId: clientId ?? null,
+        id: comment.id,
+        createdAt: comment.createdAt.toISOString(),
+      });
+    } catch (error) {
+      console.error('❌ Socket ACK emit error:', error);
+    }
+
+    res.status(createdNew ? 201 : 200).json({
+      ...comment,
+      clientId: clientId ?? null,
+      clientMessageId: clientId ?? null,
+      createdAt: comment.createdAt,
+    });
+  } catch (error) {
+    console.error('❌ Error creating realtime comment:', error);
+    res.status(500).json({ message: 'Error creating comment' });
+  }
+}
 
 export const getComments = async (req: Request, res: Response) => {
+  const rtmEnabled = rtmEnabledFlag();
+  if (!rtmEnabled) {
+    return legacyGetComments(req, res);
+  }
+  const { boardId } = req.params;
+  const ctxResult = await resolveBoardContextById(boardId, req.user.id);
+  if (!ctxResult.ok) {
+    res.status(ctxResult.status).json({ message: ctxResult.message });
+    return;
+  }
+  await respondWithRealtimeComments(req, res, ctxResult.context);
+};
+
+type BoardContext = {
+  boardId: string;
+  boardCode: string;
+  admin: boolean;
+  leftCutoff: Date | null;
+  baseWhere: Prisma.CommentWhereInput;
+};
+
+type BoardContextResult =
+  | { ok: true; context: BoardContext }
+  | { ok: false; status: number; message: string };
+
+const firstQueryValue = (value: unknown): string | undefined => {
+  if (Array.isArray(value)) {
+    return value.length > 0 ? firstQueryValue(value[0]) : undefined;
+  }
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+  return String(value);
+};
+
+const parseDateParam = (raw?: string | null): Date | null => {
+  if (!raw) return null;
+  const parsed = new Date(String(raw));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
+async function resolveBoardContextById(boardId: string, userId: string): Promise<BoardContextResult> {
+  const board = await prisma.board.findUnique({
+    where: { id: boardId },
+    select: { id: true, code: true, createdBy: true },
+  });
+  if (!board) {
+    return { ok: false, status: 404, message: 'Board not found' };
+  }
+  return resolveBoardContext(board, userId);
+}
+
+async function resolveBoardContextByCode(boardCode: string, userId: string): Promise<BoardContextResult> {
+  const board = await prisma.board.findUnique({
+    where: { code: boardCode },
+    select: { id: true, code: true, createdBy: true },
+  });
+  if (!board) {
+    return { ok: false, status: 404, message: 'Board not found' };
+  }
+  return resolveBoardContext(board, userId);
+}
+
+async function resolveBoardContext(
+  board: { id: string; code: string; createdBy: string },
+  userId: string
+): Promise<BoardContextResult> {
+  const membership = await getMembership(userId, board.id);
+  if (!membership) {
+    return { ok: false, status: 403, message: 'You are not a member of this board' };
+  }
+
+  const isLeft = membership.status === 'LEFT';
+  const leftCutoff = isLeft && membership.leftAt ? membership.leftAt : null;
+  const admin = !isLeft && (board.createdBy === userId || membership.role === 'ADMIN');
+
+  const orClauses: Prisma.CommentWhereInput[] = [
+    { visibility: 'EVERYONE' },
+    { createdById: userId },
+  ];
+  if (admin) {
+    orClauses.push({ visibility: 'ADMIN_ONLY' });
+  }
+
+  const baseWhere: Prisma.CommentWhereInput = {
+    boardId: board.id,
+    OR: orClauses,
+  };
+
+  return {
+    ok: true,
+    context: {
+      boardId: board.id,
+      boardCode: board.code,
+      admin,
+      leftCutoff,
+      baseWhere,
+    },
+  };
+}
+
+async function respondWithRealtimeComments(req: Request, res: Response, ctx: BoardContext) {
+  const limitRaw = firstQueryValue(req.query.limit);
+  const cursorRaw = firstQueryValue(req.query.cursor);
+  const beforeRaw = firstQueryValue(req.query.before);
+  const cursorIdRaw = firstQueryValue(req.query.cursorId);
+  const offsetRaw = firstQueryValue(req.query.offset);
+  const sinceRaw = firstQueryValue(req.query.since);
+
+  const limit = Math.min(parseInt(String(limitRaw ?? '50'), 10) || 50, 100);
+  const cursorDate = parseDateParam(cursorRaw ?? null);
+  const beforeDate = parseDateParam(beforeRaw ?? null);
+  const sinceDate = parseDateParam(sinceRaw ?? null);
+  const offset = beforeDate || cursorDate ? 0 : parseInt(String(offsetRaw ?? '0'), 10) || 0;
+
+  const where: Prisma.CommentWhereInput = {
+    ...ctx.baseWhere,
+    OR: Array.isArray(ctx.baseWhere.OR) ? [...ctx.baseWhere.OR] : ctx.baseWhere.OR,
+  };
+  if (ctx.baseWhere.AND) {
+    where.AND = Array.isArray(ctx.baseWhere.AND) ? [...ctx.baseWhere.AND] : [ctx.baseWhere.AND];
+  }
+
+  const andFilters: Prisma.CommentWhereInput[] = [];
+
+  if (sinceDate) {
+    andFilters.push({ createdAt: { gt: sinceDate } });
+  }
+  if (ctx.leftCutoff) {
+    andFilters.push({ createdAt: { lte: ctx.leftCutoff } });
+  }
+  if (cursorDate) {
+    if (cursorIdRaw) {
+      andFilters.push({
+        OR: [
+          { createdAt: { gt: cursorDate } },
+          {
+            AND: [
+              { createdAt: { equals: cursorDate } },
+              { id: { gt: cursorIdRaw } },
+            ],
+          },
+        ],
+      });
+    } else {
+      andFilters.push({ createdAt: { gt: cursorDate } });
+    }
+  }
+  if (beforeDate) {
+    if (cursorIdRaw) {
+      andFilters.push({
+        OR: [
+          { createdAt: { lt: beforeDate } },
+          {
+            AND: [
+              { createdAt: { equals: beforeDate } },
+              { id: { lt: cursorIdRaw } },
+            ],
+          },
+        ],
+      });
+    } else {
+      andFilters.push({ createdAt: { lt: beforeDate } });
+    }
+  }
+
+  if (andFilters.length) {
+    const existingAnd = Array.isArray(where.AND)
+      ? where.AND
+      : where.AND
+      ? [where.AND]
+      : [];
+    where.AND = [...existingAnd, ...andFilters];
+  }
+
+  const orderBy = beforeDate
+    ? [{ createdAt: 'desc' as const }, { id: 'desc' as const }]
+    : [{ createdAt: 'asc' as const }, { id: 'asc' as const }];
+
+  const total =
+    !beforeDate && !cursorDate && offset > 0
+      ? await prisma.comment.count({ where })
+      : undefined;
+
+  const comments = await prisma.comment.findMany({
+    where,
+    include: {
+      createdBy: { select: { id: true, name: true } },
+    },
+    orderBy,
+    take: limit,
+    skip: beforeDate || cursorDate ? 0 : offset,
+  });
+
+  if (beforeDate) {
+    comments.reverse();
+  }
+
+  const shaped = comments.map((c) => {
+    const isOwn = c.createdById === req.user.id;
+    const maskedToOthers = c.anonymous && !ctx.admin && !isOwn;
+    const sender = maskedToOthers ? 'Anonymous' : c.createdBy.name;
+    const actualSender = c.anonymous && ctx.admin ? c.createdBy.name : undefined;
+    return {
+      id: c.id,
+      message: c.content,
+      visibility: c.visibility as 'EVERYONE' | 'ADMIN_ONLY',
+      sender,
+      actualSender,
+      createdAt: c.createdAt,
+      userId: c.createdById,
+      senderId: c.createdById,
+      clientMessageId: c.clientId ?? null,
+    };
+  });
+
+  const lastComment = shaped.length > 0 ? shaped[shaped.length - 1] : null;
+  const nextCursor = lastComment?.createdAt ? new Date(lastComment.createdAt).toISOString() : null;
+  const nextCursorId = lastComment?.id ?? null;
+  const hasMore = shaped.length === limit;
+
+  const payload: Record<string, unknown> = {
+    comments: shaped,
+    limit,
+    hasMore,
+    cursor: nextCursor,
+    cursorId: nextCursorId,
+  };
+
+  if (!beforeDate && !cursorDate) {
+    payload.offset = offset;
+    if (total !== undefined) {
+      payload.total = total;
+    }
+  }
+
+  res.json(payload);
+}
+
+async function legacyGetComments(req: Request, res: Response) {
   try {
     const { boardId } = req.params;
 
@@ -182,7 +648,7 @@ export const getComments = async (req: Request, res: Response) => {
       orClauses.push({ visibility: 'ADMIN_ONLY' });
     }
 
-    const sinceRaw = Array.isArray(req.query.since) ? req.query.since[0] : req.query.since;
+    const sinceRaw = firstQueryValue(req.query.since);
     let sinceDate: Date | null = null;
     if (sinceRaw) {
       const parsed = new Date(String(sinceRaw));
@@ -208,15 +674,11 @@ export const getComments = async (req: Request, res: Response) => {
       commentWhere.createdAt = createdAtFilter;
     }
 
-    // Parse pagination params
-    // TASK 1.2: Reduced default limit from 100 to 50 for faster first load
-    // TASK 2.4: Support cursor-based pagination (preferred) with backward-compatible offset
-    const limitRaw = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
-    const cursorRaw = Array.isArray(req.query.cursor) ? req.query.cursor[0] : req.query.cursor;
-    const offsetRaw = Array.isArray(req.query.offset) ? req.query.offset[0] : req.query.offset;
+    const limitRaw = firstQueryValue(req.query.limit);
+    const cursorRaw = firstQueryValue(req.query.cursor);
+    const offsetRaw = firstQueryValue(req.query.offset);
     const limit = Math.min(parseInt(String(limitRaw || '50'), 10) || 50, 100);
     
-    // Parse cursor (ISO timestamp string)
     let cursorDate: Date | null = null;
     if (cursorRaw) {
       const parsed = new Date(String(cursorRaw));
@@ -225,18 +687,15 @@ export const getComments = async (req: Request, res: Response) => {
       }
     }
     
-    // Backward compatible: support offset if no cursor provided
     const offset = cursorDate ? 0 : (parseInt(String(offsetRaw || '0'), 10) || 0);
 
-    // TASK 2.4: Use cursor-based filtering if cursor provided
     if (cursorDate) {
       commentWhere.createdAt = {
         ...commentWhere.createdAt,
-        gt: cursorDate, // Get comments after cursor
+        gt: cursorDate,
       };
     }
 
-    // Get total count for pagination metadata (only if offset-based, skip for cursor)
     const total = offset > 0 ? await prisma.comment.count({ where: commentWhere }) : undefined;
 
     const comments = await prisma.comment.findMany({
@@ -246,10 +705,9 @@ export const getComments = async (req: Request, res: Response) => {
       },
       orderBy: { createdAt: 'asc' },
       take: limit,
-      ...(cursorDate ? {} : { skip: offset }), // Only use skip if not using cursor
+      ...(cursorDate ? {} : { skip: offset }),
     });
 
-    // Shape messages similar to socket events, applying anonymity rules
     const shaped = comments.map((c) => {
       const isOwn = c.createdById === req.user.id;
       const maskedToOthers = c.anonymous && !admin && !isOwn;
@@ -263,36 +721,33 @@ export const getComments = async (req: Request, res: Response) => {
         actualSender,
         createdAt: c.createdAt,
         userId: c.createdById,
+        clientMessageId: c.clientId ?? null,
       };
     });
 
-    // TASK 2.4: Return cursor-based pagination metadata
     const lastComment = shaped.length > 0 ? shaped[shaped.length - 1] : null;
     const nextCursor = lastComment?.createdAt ? new Date(lastComment.createdAt).toISOString() : null;
-    const hasMore = shaped.length === limit; // If we got exactly limit items, there might be more
+    const hasMore = shaped.length === limit;
 
-    // Return backward-compatible response with pagination metadata
     res.json({
       comments: shaped,
-      ...(total !== undefined && { total }), // Only include total if offset-based
+      ...(total !== undefined && { total }),
       limit,
-      ...(cursorDate ? { cursor: nextCursor, hasMore } : { offset }), // Cursor-based or offset-based
+      ...(cursorDate ? { cursor: nextCursor, hasMore } : { offset }),
     });
   } catch (error) {
     console.error('❌ Error fetching comments:', error);
     res.status(500).json({ message: 'Error fetching comments' });
   }
-};
+}
 
-// TASK 1.3: New endpoint to get comments by boardCode (enables parallel fetch with board details)
-export const getCommentsByCode = async (req: Request, res: Response) => {
+async function legacyGetCommentsByCode(req: Request, res: Response) {
   try {
     const { boardCode } = req.params;
 
-    // Find board by code first
     const board = await prisma.board.findUnique({ 
       where: { code: boardCode }, 
-      select: { id: true, createdBy: true } 
+      select: { id: true, createdBy: true },
     });
     if (!board) {
       res.status(404).json({ message: 'Board not found' });
@@ -317,7 +772,7 @@ export const getCommentsByCode = async (req: Request, res: Response) => {
       orClauses.push({ visibility: 'ADMIN_ONLY' });
     }
 
-    const sinceRaw = Array.isArray(req.query.since) ? req.query.since[0] : req.query.since;
+    const sinceRaw = firstQueryValue(req.query.since);
     let sinceDate: Date | null = null;
     if (sinceRaw) {
       const parsed = new Date(String(sinceRaw));
@@ -343,13 +798,11 @@ export const getCommentsByCode = async (req: Request, res: Response) => {
       commentWhere.createdAt = createdAtFilter;
     }
 
-    // Parse pagination params
-    const limitRaw = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
-    const offsetRaw = Array.isArray(req.query.offset) ? req.query.offset[0] : req.query.offset;
+    const limitRaw = firstQueryValue(req.query.limit);
+    const offsetRaw = firstQueryValue(req.query.offset);
     const limit = Math.min(parseInt(String(limitRaw || '50'), 10) || 50, 100);
     const offset = parseInt(String(offsetRaw || '0'), 10) || 0;
 
-    // Get total count for pagination metadata
     const total = await prisma.comment.count({ where: commentWhere });
 
     const comments = await prisma.comment.findMany({
@@ -362,7 +815,6 @@ export const getCommentsByCode = async (req: Request, res: Response) => {
       skip: offset,
     });
 
-    // Shape messages similar to socket events, applying anonymity rules
     const shaped = comments.map((c) => {
       const isOwn = c.createdById === req.user.id;
       const maskedToOthers = c.anonymous && !admin && !isOwn;
@@ -376,10 +828,10 @@ export const getCommentsByCode = async (req: Request, res: Response) => {
         actualSender,
         createdAt: c.createdAt,
         userId: c.createdById,
+        clientMessageId: c.clientId ?? null,
       };
     });
 
-    // Return backward-compatible response with pagination metadata
     res.json({
       comments: shaped,
       total,
@@ -390,4 +842,19 @@ export const getCommentsByCode = async (req: Request, res: Response) => {
     console.error('❌ Error fetching comments by code:', error);
     res.status(500).json({ message: 'Error fetching comments' });
   }
+}
+
+// TASK 1.3: New endpoint to get comments by boardCode (enables parallel fetch with board details)
+export const getCommentsByCode = async (req: Request, res: Response) => {
+  const rtmEnabled = rtmEnabledFlag();
+  if (!rtmEnabled) {
+    return legacyGetCommentsByCode(req, res);
+  }
+    const { boardCode } = req.params;
+  const ctxResult = await resolveBoardContextByCode(boardCode, req.user.id);
+  if (!ctxResult.ok) {
+    res.status(ctxResult.status).json({ message: ctxResult.message });
+      return;
+  }
+  await respondWithRealtimeComments(req, res, ctxResult.context);
 };

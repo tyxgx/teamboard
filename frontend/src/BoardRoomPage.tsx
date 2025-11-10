@@ -99,6 +99,9 @@ const debounce = <T extends (...args: any[]) => void>(fn: T, delay: number) => {
   };
 };
 
+const isRealtimeMessagingEnabled = () =>
+  (import.meta.env.VITE_RTM_ENABLED === "true") || localStorage.getItem("tb.rtm") === "1";
+
 const normalizeMessage = (message: ChatMessage) => {
   const createdAtValue = message.createdAt
     ? new Date(message.createdAt).toISOString()
@@ -114,7 +117,19 @@ const mergeMessages = (existing: ChatMessage[], incoming: ChatMessage[]) => {
   const keyFor = (message: ChatMessage) =>
     message.id ?? message.clientMessageId ?? `${message.createdAt}-${message.message}`;
   existing.forEach((message) => map.set(keyFor(message), message));
-  incoming.forEach((message) => map.set(keyFor(message), message));
+  incoming.forEach((message) => {
+    const key = keyFor(message);
+    if (map.has(key)) {
+      const existingMessage = map.get(key)!;
+      map.set(key, {
+        ...existingMessage,
+        ...message,
+        status: existingMessage.status ?? message.status,
+      });
+    } else {
+      map.set(key, message);
+    }
+  });
   return Array.from(map.values()).sort(
     (a, b) =>
       new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime()
@@ -126,7 +141,7 @@ const mapServerMessage = (
   fallbackCode?: string
 ): ChatMessage & { boardCode?: string } => ({
   id: payload.id ?? undefined,
-  clientMessageId: payload.clientMessageId ?? undefined,
+  clientMessageId: payload.clientMessageId ?? payload.clientId ?? undefined,
   boardCode: payload.boardCode ?? fallbackCode,
   sender: payload.sender ?? "Unknown",
   actualSender: payload.actualSender ?? undefined,
@@ -1018,7 +1033,13 @@ export default function BoardRoomPage() {
               pendingMessagesRef.current.delete(normalized.clientMessageId);
             }
             return prev.map((message, idx) =>
-              idx === existingIndex ? { ...normalized } : message
+              idx === existingIndex
+                ? {
+                    ...message,
+                    ...normalized,
+                    status: message.status ?? normalized.status,
+                  }
+                : message
             );
           }
           
@@ -1174,6 +1195,48 @@ export default function BoardRoomPage() {
     socketClient.on("user-joined", handleUserJoined);
     socketClient.on("user-left", handleUserLeft);
 
+    const rtmEnabled = isRealtimeMessagingEnabled();
+
+    let handleMessageNew: ((payload: any) => void) | null = null;
+    let handleMessageAck: ((payload: { boardCode?: string; clientId?: string; id: string; createdAt?: string }) => void) | null = null;
+
+    if (rtmEnabled) {
+      handleMessageNew = (payload: any) => {
+        handleReceiveMessage(payload);
+      };
+      handleMessageAck = (payload) => {
+        const targetCode = payload.boardCode ?? activeBoardCode ?? null;
+        if (!targetCode) return;
+
+        setMessages((prev) => {
+          const idx = prev.findIndex((msg) => (!!payload.clientId && msg.clientMessageId === payload.clientId) || msg.id === payload.id);
+          if (idx < 0) {
+            return prev;
+          }
+
+          const next = [...prev];
+          next[idx] = {
+            ...next[idx],
+            id: payload.id,
+            status: "sent",
+            createdAt: payload.createdAt ?? next[idx].createdAt,
+          };
+          return next;
+        });
+
+        if (payload.clientId) {
+          pendingMessagesRef.current.delete(payload.clientId);
+        }
+
+        if (payload.createdAt) {
+          updateLastReceived(targetCode, payload.createdAt);
+        }
+      };
+
+      socketClient.on("message:new", handleMessageNew);
+      socketClient.on("message:ack", handleMessageAck);
+    }
+
     return () => {
       socketClient.off("receive-message", handleReceiveMessage);
       socketClient.off("board-activity", handleBoardActivity);
@@ -1182,6 +1245,12 @@ export default function BoardRoomPage() {
       socketClient.off("membership-updated", handleMembershipUpdated);
       socketClient.off("user-joined", handleUserJoined);
       socketClient.off("user-left", handleUserLeft);
+      if (handleMessageNew) {
+        socketClient.off("message:new", handleMessageNew);
+      }
+      if (handleMessageAck) {
+        socketClient.off("message:ack", handleMessageAck);
+      }
     };
   }, [activeBoardCode, applyUnread, boardDetails, hiddenBoardIds, loadBoardDetails, navigate, updateBoardSummary, updateLastReceived, user]);
 
@@ -1195,61 +1264,143 @@ export default function BoardRoomPage() {
       setVisibility("EVERYONE");
     }
 
-    const clientMessageId = `client-${Date.now()}`;
-    const toSend: ChatMessage = {
-      id: clientMessageId,
-      clientMessageId,
-      boardCode: boardDetails.code,
-      sender: anonymousMode ? "Anonymous" : user.name,
-      actualSender: user.name,
-      message: trimmed,
-      visibility: effectiveVisibility,
-      createdAt: new Date().toISOString(),
-      senderId: user.id,
-      userId: user.id,
+    const legacySend = async () => {
+      const clientMessageId = `client-${Date.now()}`;
+      const createdAt = new Date().toISOString();
+      const optimistic: ChatMessage = {
+        id: clientMessageId,
+        clientMessageId,
+        boardCode: boardDetails.code,
+        sender: anonymousMode ? "Anonymous" : user.name,
+        actualSender: user.name,
+        message: trimmed,
+        visibility: effectiveVisibility,
+        createdAt,
+        senderId: user.id,
+        userId: user.id,
+      };
+
+      setComposerValue("");
+      pendingMessagesRef.current.add(clientMessageId);
+      setMessages((prev) => [...prev, optimistic]);
+      updateLastReceived(boardDetails.code, createdAt);
+
+      startTransition(() => {
+        updateBoardSummary(boardDetails.code, {
+          lastActivity: createdAt,
+          lastCommentPreview: trimmed,
+          lastCommentAt: createdAt,
+          lastCommentVisibility: effectiveVisibility,
+          lastCommentAnonymous: anonymousMode,
+          lastCommentSenderName: user.name,
+        });
+      });
+
+      const headers = getAuthHeaders();
+      if (!headers) return;
+      try {
+        await realtimeService.handleSend(
+          {
+            content: trimmed,
+            visibility: effectiveVisibility,
+            boardId: boardDetails.id,
+            anonymous: anonymousMode,
+            clientMessageId,
+          },
+          headers
+        );
+      } catch (error: any) {
+        pendingMessagesRef.current.delete(clientMessageId);
+        if (error?.response?.status === 401) {
+          handleAuthFailure();
+          return;
+        }
+        console.error("Failed to send message", error);
+      }
     };
 
-    // Clear composer IMMEDIATELY (synchronously, before any async operations)
-    setComposerValue("");
-    
-    // Add optimistic message instantly
-    pendingMessagesRef.current.add(clientMessageId);
-    setMessages((prev) => [...prev, toSend]);
-    updateLastReceived(boardDetails.code, toSend.createdAt);
+    const realtimeSend = async () => {
+      const clientMessageId =
+        typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+          ? crypto.randomUUID()
+          : `client-${Date.now()}`;
+      const createdAt = new Date().toISOString();
+      const optimistic: ChatMessage = {
+        id: clientMessageId,
+        clientMessageId,
+        boardCode: boardDetails.code,
+        sender: anonymousMode ? "Anonymous" : user.name,
+        actualSender: user.name,
+        message: trimmed,
+        visibility: effectiveVisibility,
+        createdAt,
+        senderId: user.id,
+        userId: user.id,
+        status: "sending",
+      };
 
-    // Use startTransition for non-urgent board summary update
-    startTransition(() => {
-      updateBoardSummary(boardDetails.code, {
-        lastActivity: toSend.createdAt ?? new Date().toISOString(),
-        lastCommentPreview: trimmed,
-        lastCommentAt: toSend.createdAt ?? new Date().toISOString(),
-        lastCommentVisibility: effectiveVisibility,
-        lastCommentAnonymous: anonymousMode,
-        lastCommentSenderName: anonymousMode ? user.name : user.name,
+      setComposerValue("");
+      pendingMessagesRef.current.add(clientMessageId);
+      setMessages((prev) => [...prev, optimistic]);
+      updateLastReceived(boardDetails.code, createdAt);
+
+      startTransition(() => {
+        updateBoardSummary(boardDetails.code, {
+          lastActivity: createdAt,
+          lastCommentPreview: trimmed,
+          lastCommentAt: createdAt,
+          lastCommentVisibility: effectiveVisibility,
+          lastCommentAnonymous: anonymousMode,
+          lastCommentSenderName: user.name,
+        });
       });
-    });
 
-    const headers = getAuthHeaders();
-    if (!headers) return;
-    try {
-      await realtimeService.handleSend(
-        {
-          content: trimmed,
-          visibility: effectiveVisibility,
-          boardId: boardDetails.id,
-          anonymous: anonymousMode,
-          clientMessageId,
-        },
-        headers
-      );
-    } catch (error: any) {
-      if (error?.response?.status === 401) {
-        handleAuthFailure();
-        return;
+      const headers = getAuthHeaders();
+      if (!headers) return;
+      try {
+        await realtimeService.handleSend(
+          {
+            content: trimmed,
+            visibility: effectiveVisibility,
+            boardId: boardDetails.id,
+            anonymous: anonymousMode,
+            clientMessageId,
+          },
+          headers
+        );
+      } catch (error: any) {
+        pendingMessagesRef.current.delete(clientMessageId);
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.clientMessageId === clientMessageId ? { ...message, status: "failed" } : message
+          )
+        );
+        if (error?.response?.status === 401) {
+          handleAuthFailure();
+          return;
+        }
+        console.error("Failed to send message", error);
       }
-      console.error("Failed to send message", error);
+    };
+
+    if (!isRealtimeMessagingEnabled()) {
+      await legacySend();
+      return;
     }
-  }, [anonymousMode, boardDetails, composerValue, getAuthHeaders, handleAuthFailure, isAdmin, updateBoardSummary, updateLastReceived, user, visibility]);
+
+    await realtimeSend();
+  }, [
+    anonymousMode,
+    boardDetails,
+    composerValue,
+    getAuthHeaders,
+    handleAuthFailure,
+    isAdmin,
+    updateBoardSummary,
+    updateLastReceived,
+    user,
+    visibility,
+  ]);
 
   const handleToggleAnonymous = useCallback(
     async (enabled: boolean) => {
@@ -1299,32 +1450,75 @@ export default function BoardRoomPage() {
     if (!boardDetails?.id || loadingOlderMessages) return;
     setCommentsError(null);
     setLoadingOlderMessages(true);
-    try {
-      // TASK 2.4: For loading older messages, use offset-based pagination (backward compatible)
-      // Get current message count to calculate offset
+    const rtmEnabled = isRealtimeMessagingEnabled();
+
+    const legacyLoad = async () => {
       const currentCount = messages.length;
-      const url = `${BACKEND}/api/comments/${boardDetails.id}?limit=50&offset=${currentCount}`;
+      const headers = getAuthHeaders();
+      if (!headers) return;
+      const response = await axios.get(
+        `${BACKEND}/api/comments/${boardDetails.id}?limit=50&offset=${currentCount}`,
+        { headers }
+      );
+      const responseData = response.data;
+      const history: ChatMessage[] = Array.isArray(responseData) ? responseData : (responseData.comments || []);
+
+      if (history.length === 0) {
+        setHasMoreMessages(false);
+      } else {
+        const hasMore =
+          responseData.hasMore ??
+          (responseData.total ? currentCount + history.length < responseData.total : true);
+        setHasMoreMessages(hasMore);
+      }
+
+      const olderMessages = history.map((message) => ({ ...message, boardCode: boardDetails.code }));
+      setMessages((prev) => [...olderMessages, ...prev]);
+    };
+
+    const realtimeLoad = async () => {
+      if (messages.length === 0) {
+        setHasMoreMessages(false);
+        return;
+      }
+
+      const oldest = messages[0];
+      const referenceCreatedAt = oldest.createdAt
+        ? new Date(oldest.createdAt).toISOString()
+        : new Date().toISOString();
+      const cursorIdValue = oldest.id ?? oldest.clientMessageId ?? "";
+
+      let url = `${BACKEND}/api/comments/${boardDetails.id}?limit=50&before=${encodeURIComponent(
+        referenceCreatedAt
+      )}`;
+      if (cursorIdValue) {
+        url += `&cursorId=${encodeURIComponent(cursorIdValue)}`;
+      }
+
       const headers = getAuthHeaders();
       if (!headers) return;
       const response = await axios.get(url, { headers });
       const responseData = response.data;
       const history: ChatMessage[] = Array.isArray(responseData) ? responseData : (responseData.comments || []);
-      
-      // Check if there are more messages to load
-      if (history.length === 0) {
-        setHasMoreMessages(false);
-      } else {
-        const hasMore = responseData.hasMore ?? (responseData.total ? currentCount + history.length < responseData.total : true);
-        setHasMoreMessages(hasMore);
-      }
-      
-      // Prepend older messages to the beginning
+
+      const hasMore =
+        responseData.hasMore ?? (responseData.total ? history.length > 0 : history.length === 50);
+      setHasMoreMessages(hasMore);
+
       const olderMessages = history.map((message) => ({ ...message, boardCode: boardDetails.code }));
       setMessages((prev) => [...olderMessages, ...prev]);
+    };
+
+    try {
+      if (!rtmEnabled) {
+        await legacyLoad();
+      } else {
+        await realtimeLoad();
+      }
     } finally {
       setLoadingOlderMessages(false);
     }
-  }, [boardDetails, loadComments, loadingOlderMessages, messages.length, getAuthHeaders]);
+  }, [boardDetails, getAuthHeaders, loadingOlderMessages, messages, setCommentsError]);
 
   const handleCreateBoard = useCallback(async () => {
     const name = createBoardName.trim();
