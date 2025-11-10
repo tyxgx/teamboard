@@ -1374,7 +1374,14 @@ export default function BoardRoomPage() {
       socketClient.on("message:new", handleMessageNew);
       socketClient.on("message:ack", handleMessageAck);
       
-      console.log("[rt] 🔵 Handlers registered on socket");
+      console.log("[rt] 🔵 Handlers registered on socket", {
+        socketId: socketClient.id,
+        socketConnected: socketClient.connected,
+      });
+      
+      // Verify handlers are actually on the socket by checking listeners
+      // Note: socket.io doesn't expose hasListeners, so we'll test by emitting a test event
+      console.log("[rt] 🔵 Verification: Handlers should fire on next message:ack or message:new event");
       
       // Verify by checking if socket has the listeners
       console.log("[rt] 🔵 Verifying registration - handlers should fire on next message");
@@ -1397,24 +1404,41 @@ export default function BoardRoomPage() {
 
     // Expose manual registration function for debugging
     if (typeof window !== 'undefined') {
-      const wrappedFunction = () => {
-        console.log("🔴🔴🔴 MANUAL CALL: window.__registerRTMListeners() invoked - NO PREFIX");
-        console.log("🔴 MANUAL CALL: window.__registerRTMListeners() invoked");
-        alert("Function called! Check console for logs");
-        try {
-          console.log("🔴 About to call registerRTMListeners()");
-          registerRTMListeners();
-          console.log("🔴 MANUAL CALL: registerRTMListeners() completed");
-        } catch (error) {
-          console.error("🔴 MANUAL CALL: Error in registerRTMListeners:", error);
-          alert("Error: " + error);
-        }
-      };
-      (window as any).__registerRTMListeners = wrappedFunction;
-      console.log("[rt] 🔧 Manual registration function available: window.__registerRTMListeners()");
-      console.log("🔴 Function stored, type:", typeof (window as any).__registerRTMListeners);
-      console.log("🔴 Function is:", (window as any).__registerRTMListeners);
-    }
+        const wrappedFunction = () => {
+          console.log("🔴🔴🔴 MANUAL CALL: window.__registerRTMListeners() invoked - NO PREFIX");
+          console.log("🔴 MANUAL CALL: window.__registerRTMListeners() invoked");
+          try {
+            console.log("🔴 About to call registerRTMListeners()");
+            registerRTMListeners();
+            console.log("🔴 MANUAL CALL: registerRTMListeners() completed");
+          } catch (error) {
+            console.error("🔴 MANUAL CALL: Error in registerRTMListeners:", error);
+          }
+        };
+        (window as any).__registerRTMListeners = wrappedFunction;
+        
+        // Expose function to check if handlers are on socket
+        (window as any).__checkRTMHandlers = () => {
+          console.log("🔍 Checking RTM handlers on socket...");
+          const s = socketClient;
+          console.log("Socket ID:", s.id);
+          console.log("Socket connected:", s.connected);
+          console.log("Handlers exist:", !!window.__rtmHandlers);
+          console.log("Test: Add a temporary listener to see if events are received");
+          
+          // Add a one-time test listener
+          const testHandler = (data: any) => {
+            console.log("✅ TEST: Socket received message:ack event!", data);
+            s.off("message:ack", testHandler);
+          };
+          s.on("message:ack", testHandler);
+          console.log("✅ Test listener added - send a message to see if this fires");
+        };
+        
+        console.log("[rt] 🔧 Manual functions available:");
+        console.log("  - window.__registerRTMListeners()");
+        console.log("  - window.__checkRTMHandlers()");
+      }
 
     // Re-register on reconnect to ensure they persist
     const handleReconnect = () => {
