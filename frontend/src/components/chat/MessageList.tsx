@@ -248,7 +248,7 @@ export const MessageList = ({
     
     // Group messages: reduce spacing if same sender and within 2 minutes
     const prevItem = index > 0 ? virtualItems[index - 1] : null;
-    const prevMsg = prevItem?.message;
+    const prevMsg = prevItem && 'message' in prevItem ? prevItem.message : null;
     const isGrouped = prevMsg && 
       !prevMsg.system &&
       prevMsg.sender === msg.sender && 
