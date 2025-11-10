@@ -1237,6 +1237,8 @@ export default function BoardRoomPage() {
     // Register RTM listeners (message:new, message:ack) - these must persist across reconnects
     // IMPORTANT: Check RTM status inside the function, not from closure, so it's always current
     const registerRTMListeners = () => {
+      console.log("🔵🔵🔵 registerRTMListeners() CALLED - NO PREFIX", new Date().toISOString());
+      console.log("[rt] 🔵 registerRTMListeners() CALLED", new Date().toISOString());
       const rtmEnabled = isRealtimeMessagingEnabled();
       
       // Log RTM status
