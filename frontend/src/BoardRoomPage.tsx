@@ -187,7 +187,7 @@ export default function BoardRoomPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [composerValue, setComposerValue] = useState("");
   const [visibility, setVisibility] = useState<"EVERYONE" | "ADMIN_ONLY">("EVERYONE");
-  const [anonymousMode, setAnonymousMode] = useState(false); // Anonymous mode OFF by default - user's choice per message
+  const [anonymousMode, setAnonymousMode] = useState(false); // Anonymous mode OFF by default - always available
   const [isSidebarOpen, setSidebarOpen] = useState(false);
   const [isRightPanelOpen, setRightPanelOpen] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -894,11 +894,8 @@ export default function BoardRoomPage() {
     }
   }, [boardCode, user?.name]);
 
-  useEffect(() => {
-    if (!isAdmin && visibility === "ADMIN_ONLY") {
-      setVisibility("EVERYONE");
-    }
-  }, [isAdmin, visibility]);
+  // Remove this useEffect - members should be able to use admin-only feature
+  // Only admins should not see the button (handled in ChatComposer)
 
   useEffect(() => {
     const code = boardDetails?.code ?? null;
@@ -1148,7 +1145,7 @@ export default function BoardRoomPage() {
       if (boardDetails?.code === code) {
         setBoardDetails((prev) => (prev ? { ...prev, anonymousEnabled: payload.anonymousEnabled } : prev));
         if (!payload.anonymousEnabled) {
-          setAnonymousMode(false); // Reset to default (OFF) if anonymous is disabled on board
+          setAnonymousMode(false); // Reset to default (OFF) - anonymous always available
         }
       }
     };
@@ -1266,8 +1263,8 @@ export default function BoardRoomPage() {
     const registerRTMListeners = () => {
       console.log("🔵🔵🔵 registerRTMListeners() CALLED - NO PREFIX", new Date().toISOString());
       console.log("[rt] 🔵 registerRTMListeners() CALLED", new Date().toISOString());
-      const rtmEnabled = isRealtimeMessagingEnabled();
-      
+    const rtmEnabled = isRealtimeMessagingEnabled();
+
       // Log RTM status
       console.log("[rt] RTM Status Check:", {
         rtmEnabled,
@@ -1308,7 +1305,7 @@ export default function BoardRoomPage() {
       const handleMessageNew = (payload: any) => {
         console.log("[rt] 📩 Received message:new - HANDLER CALLED", payload);
         try {
-          handleReceiveMessage(payload);
+        handleReceiveMessage(payload);
         } catch (error) {
           console.error("[rt] ❌ Error in handleMessageNew:", error);
         }
@@ -1348,10 +1345,10 @@ export default function BoardRoomPage() {
               // This is the message we're updating
               return {
                 ...msg,
-                id: payload.id,
+            id: payload.id,
                 status: "sent" as const,
                 createdAt: payload.createdAt ?? msg.createdAt,
-              };
+          };
             }
             return msg;
           });
@@ -1659,11 +1656,8 @@ export default function BoardRoomPage() {
     if (!user || !boardDetails || !boardDetails.id || !boardDetails.code) return;
     const trimmed = composerValue.trim();
     if (!trimmed) return;
-    const effectiveVisibility =
-      visibility === "ADMIN_ONLY" && !isAdmin ? "EVERYONE" : visibility;
-    if (visibility === "ADMIN_ONLY" && !isAdmin) {
-      setVisibility("EVERYONE");
-    }
+    // Members can send admin-only messages - no restriction needed
+    const effectiveVisibility = visibility;
 
     const legacySend = async () => {
       const clientMessageId = `client-${Date.now()}`;
@@ -1803,34 +1797,6 @@ export default function BoardRoomPage() {
     visibility,
   ]);
 
-  const handleToggleAnonymous = useCallback(
-    async (enabled: boolean) => {
-      if (!boardDetails) return;
-      // Only admins can disable anonymous mode
-      if (!enabled && !isAdmin) {
-        return; // Prevent non-admins from disabling anonymous mode
-      }
-      const headers = getAuthHeaders();
-      if (!headers) return;
-      try {
-        await axios.patch(
-          `${BACKEND}/api/boards/${boardDetails.id}/anonymous`,
-          { enabled },
-          { headers }
-        );
-        setBoardDetails((prev) => (prev ? { ...prev, anonymousEnabled: enabled } : prev));
-        updateBoardSummary(boardDetails.code, { anonymousEnabled: enabled });
-        if (!enabled) setAnonymousMode(false); // If anonymous is disabled on board, reset to default (OFF) for next message
-      } catch (error: any) {
-        if (error?.response?.status === 401) {
-          handleAuthFailure();
-          return;
-        }
-        console.error("Failed to toggle anonymous mode", error);
-      }
-    },
-    [boardDetails, getAuthHeaders, handleAuthFailure, updateBoardSummary, isAdmin]
-  );
 
   const handleRetryComments = useCallback(async () => {
     if (!boardDetails?.id || !boardDetails.code) return;
@@ -2450,8 +2416,6 @@ export default function BoardRoomPage() {
               onToggleAnonymous={setAnonymousMode}
               visibility={visibility}
               onChangeVisibility={setVisibility}
-              isAnonymousAllowed={boardDetails.anonymousEnabled}
-              canUseAdminOnly={isAdmin}
               isAdmin={isAdmin}
               readOnly={readOnly}
               disabled={!user || readOnly}
@@ -2488,9 +2452,7 @@ export default function BoardRoomPage() {
 
       <RightPanel
         board={boardDetails}
-        isAdmin={isAdmin}
         isReadOnly={readOnly}
-        onToggleAnonymous={handleToggleAnonymous}
         onCopyInvite={handleCopyInvite}
         isVisible={Boolean(boardDetails)}
       />
@@ -2514,9 +2476,7 @@ export default function BoardRoomPage() {
           <div className="h-full w-[85vw] max-w-[360px] bg-white" onClick={(event) => event.stopPropagation()}>
             <RightPanel
               board={boardDetails}
-              isAdmin={isAdmin}
               isReadOnly={readOnly}
-              onToggleAnonymous={handleToggleAnonymous}
               onCopyInvite={handleCopyInvite}
               isVisible
               variant="mobile"
