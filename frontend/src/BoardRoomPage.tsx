@@ -1321,6 +1321,7 @@ export default function BoardRoomPage() {
         console.log("[rt] 🔵 Handlers stored in window.__rtmHandlers");
         
         // Also expose a test function to manually trigger handlers
+        // Fixed TypeScript types: eventType: string, payload: any
         (window as any).__testRTMHandlers = (eventType: string, payload: any) => {
           console.log("🧪 TEST: Manually calling handler for", eventType, payload);
           if (eventType === 'message:ack') {
