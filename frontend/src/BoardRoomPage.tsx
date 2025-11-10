@@ -1230,19 +1230,36 @@ export default function BoardRoomPage() {
     let handleMessageAck: ((payload: { boardCode?: string; clientId?: string; id: string; createdAt?: string }) => void) | null = null;
 
     if (rtmEnabled) {
+      const isConnected = getSocketConnectionState();
+      console.log("[rt] ✅ RTM enabled, registering message:new and message:ack listeners", {
+        socketConnected: isConnected,
+        socketId: socketClient.id,
+        activeBoardCode,
+      });
       handleMessageNew = (payload: any) => {
         handleReceiveMessage(payload);
       };
       handleMessageAck = (payload) => {
+        console.log("[rt] 📨 Received message:ack", payload, {
+          socketId: socketClient.id,
+          socketConnected: socketClient.connected,
+        });
         const targetCode = payload.boardCode ?? activeBoardCode ?? null;
-        if (!targetCode) return;
+        if (!targetCode) {
+          console.warn("[rt] ⚠️ message:ack: No targetCode", { payload, activeBoardCode });
+          return;
+        }
+
+        console.log("[rt] ✅ Processing message:ack for board:", targetCode, "clientId:", payload.clientId);
 
         setMessages((prev) => {
           const idx = prev.findIndex((msg) => (!!payload.clientId && msg.clientMessageId === payload.clientId) || msg.id === payload.id);
           if (idx < 0) {
+            console.warn("[rt] ⚠️ message:ack: Message not found in list", { clientId: payload.clientId, id: payload.id, messageCount: prev.length });
             return prev;
           }
 
+          console.log("[rt] ✅ Found message at index", idx, "updating status to 'sent'");
           const next = [...prev];
           next[idx] = {
             ...next[idx],
