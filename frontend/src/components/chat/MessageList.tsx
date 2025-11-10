@@ -260,6 +260,8 @@ export const MessageList = ({
           <span>{msg.message}</span>
           {msg.status === "sending" ? (
             <span className="ml-2 align-middle text-[10px] text-slate-400">sending…</span>
+          ) : msg.status === "sent" ? (
+            <span className="ml-2 align-middle text-[10px] text-slate-300">✓</span>
           ) : null}
           {msg.status === "failed" ? (
             <span className="ml-2 align-middle text-[10px] text-red-500">failed</span>
@@ -383,6 +385,8 @@ export const MessageList = ({
                           <span>{msg.message}</span>
                           {msg.status === "sending" ? (
                             <span className="ml-2 align-middle text-[10px] text-slate-400">sending…</span>
+                          ) : msg.status === "sent" ? (
+                            <span className="ml-2 align-middle text-[10px] text-slate-300">✓</span>
                           ) : null}
                           {msg.status === "failed" ? (
                             <span className="ml-2 align-middle text-[10px] text-red-500">failed</span>
