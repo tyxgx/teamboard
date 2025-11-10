@@ -1268,10 +1268,13 @@ export default function BoardRoomPage() {
       };
 
       const handleMessageAck = (payload: { boardCode?: string; clientId?: string; id: string; createdAt?: string }) => {
+        // Use multiple log methods to ensure we see it
+        console.log("🔴🔴🔴 ACK HANDLER CALLED - NO PREFIX");
         console.log("[rt] 📨 Received message:ack - HANDLER CALLED", payload, {
           socketId: socketClient.id,
           socketConnected: socketClient.connected,
         });
+        console.warn("⚠️⚠️⚠️ ACK HANDLER CALLED - WARNING LEVEL");
         const targetCode = payload.boardCode ?? activeBoardCode ?? null;
         if (!targetCode) {
           console.warn("[rt] ⚠️ message:ack: No targetCode", { payload, activeBoardCode });
