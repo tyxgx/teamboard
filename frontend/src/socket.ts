@@ -2,7 +2,7 @@
 import { io, Socket } from "socket.io-client";
 
 // Get backend URL with fallback
-const BACKEND = (import.meta.env.VITE_BACKEND_URL as string) || "https://teamboard-ohg8.onrender.com";
+const BACKEND = (import.meta.env.VITE_BACKEND_URL as string) || "https://teamboard-gees.onrender.com";
 
 // Log backend URL for debugging (helpful in production)
 if (!import.meta.env.VITE_BACKEND_URL) {
