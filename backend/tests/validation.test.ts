@@ -1,49 +1,85 @@
+// Zod validation on the real current routes. Also covers the two validation gaps closed
+// alongside this test rewrite (see CODE_REVIEW.md H1 / M2): board name/join-code validation
+// wasn't wired into the routes at all, and comment content had no max length.
 import request from 'supertest';
 import app from '../src/index';
-import prisma from '../src/db/client';
-import bcrypt from 'bcryptjs';
+import { loginAsNewUser } from './helpers/auth';
 
-let token = '';
-
-beforeAll(async () => {
-  // Seed known user
-  await prisma.user.upsert({
-    where: { email: 'valid@example.com' },
-    update: {},
-    create: {
-      name: 'Seeded User',
-      email: 'valid@example.com',
-      password: await bcrypt.hash('test123', 10),
-      role: 'ADMIN',
-    },
-  });
-
-  // Login to get token
-  const loginRes = await request(app).post('/api/auth/login').send({
-    email: 'valid@example.com',
-    password: 'test123',
-  });
-
-  token = `Bearer ${loginRes.body.token}`;
-});
-
-describe('🧪 Zod Validation Errors', () => {
-  it('should fail signup with missing fields', async () => {
-    const res = await request(app).post('/api/auth/signup').send({ name: 'Only Name' });
+describe('🧪 Zod validation', () => {
+  it('rejects Google login with no idToken', async () => {
+    const res = await request(app).post('/api/auth/google').send({});
     expect(res.statusCode).toBe(400);
   });
 
-  it('should fail board creation with missing name', async () => {
-    const res = await request(app).post('/api/boards').set('Authorization', token).send({});
+  it('rejects board creation with a missing name', async () => {
+    const { token } = await loginAsNewUser();
+    const res = await request(app)
+      .post('/api/boards')
+      .set('Authorization', `Bearer ${token}`)
+      .send({});
     expect(res.statusCode).toBe(400);
   });
 
-  it('should fail comment creation with empty content & invalid boardId', async () => {
-    const res = await request(app).post('/api/comments').set('Authorization', token).send({
-      content: '',
-      visibility: 'EVERYONE',
-      boardId: '123',
-    });
+  it('rejects board creation with an empty/whitespace-only name', async () => {
+    const { token } = await loginAsNewUser();
+    const res = await request(app)
+      .post('/api/boards')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: '   ' });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects joining a board with no code', async () => {
+    const { token } = await loginAsNewUser();
+    const res = await request(app)
+      .post('/api/boards/join')
+      .set('Authorization', `Bearer ${token}`)
+      .send({});
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects comment creation with empty content and a non-UUID boardId', async () => {
+    const { token } = await loginAsNewUser();
+    const res = await request(app)
+      .post('/api/comments')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ content: '', visibility: 'EVERYONE', boardId: 'not-a-uuid' });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects comment creation over the 5000-character limit', async () => {
+    const { token } = await loginAsNewUser();
+    const board = await request(app)
+      .post('/api/boards')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Validation Board' });
+
+    const res = await request(app)
+      .post('/api/comments')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        content: 'x'.repeat(5001),
+        visibility: 'EVERYONE',
+        boardId: board.body.id,
+      });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rejects comment creation with an invalid visibility value', async () => {
+    const { token } = await loginAsNewUser();
+    const board = await request(app)
+      .post('/api/boards')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Validation Board 2' });
+
+    const res = await request(app)
+      .post('/api/comments')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        content: 'hi',
+        visibility: 'NOT_A_REAL_VALUE',
+        boardId: board.body.id,
+      });
     expect(res.statusCode).toBe(400);
   });
 });

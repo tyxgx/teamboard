@@ -1,76 +1,86 @@
+// Core business flows: create a board, join it by invite code, post a comment, read it back.
+// Also covers the same auth-required checks the old core.test.ts had, but against real routes
+// (POST /api/boards, POST /api/comments) instead of a password-based signup/login flow that
+// no longer exists (see CODE_REVIEW.md C3).
 import request from 'supertest';
 import app from '../src/index';
-import prisma from '../src/db/client'; // 👈 Your Prisma client
-import bcrypt from 'bcryptjs';
+import { loginAsNewUser } from './helpers/auth';
 
-beforeAll(async () => {
-  // 🧪 Seed a known test user for login test
-  await prisma.user.upsert({
-    where: { email: 'testuser@example.com' },
-    update: {},
-    create: {
-      name: 'Seeded User',
-      email: 'testuser@example.com',
-      password: await bcrypt.hash('test123', 10),
-      role: 'MEMBER',
-    },
+describe('📋 Board lifecycle', () => {
+  it('creates a board, joins it by invite code, and lists it for both members', async () => {
+    const creator = await loginAsNewUser({ name: 'Creator' });
+    const joiner = await loginAsNewUser({ name: 'Joiner' });
+
+    const created = await request(app)
+      .post('/api/boards')
+      .set('Authorization', `Bearer ${creator.token}`)
+      .send({ name: 'Core Flow Board' });
+    expect(created.statusCode).toBe(201);
+    const { code, id: boardId } = created.body;
+
+    const joined = await request(app)
+      .post('/api/boards/join')
+      .set('Authorization', `Bearer ${joiner.token}`)
+      .send({ code });
+    expect(joined.statusCode).toBe(200);
+    expect(joined.body.code).toBe(code);
+
+    const creatorList = await request(app)
+      .get('/api/boards')
+      .set('Authorization', `Bearer ${creator.token}`);
+    expect(creatorList.body.some((b: { id: string }) => b.id === boardId)).toBe(true);
+
+    const joinerList = await request(app)
+      .get('/api/boards')
+      .set('Authorization', `Bearer ${joiner.token}`);
+    expect(joinerList.body.some((b: { id: string }) => b.id === boardId)).toBe(true);
   });
-});
 
-describe('🔐 AUTH TESTS', () => {
-  it('should signup a new user', async () => {
+  it('rejects joining with an invite code that does not exist', async () => {
+    const { token } = await loginAsNewUser();
     const res = await request(app)
-      .post('/api/auth/signup')
+      .post('/api/boards/join')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ code: 'NOSUCHCODE' });
+    expect(res.statusCode).toBe(404);
+  });
+});
+
+describe('💬 Comments', () => {
+  it('posts a comment on a board and reads it back', async () => {
+    const { token } = await loginAsNewUser();
+    const board = await request(app)
+      .post('/api/boards')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Comment Flow Board' });
+
+    const posted = await request(app)
+      .post('/api/comments')
+      .set('Authorization', `Bearer ${token}`)
       .send({
-        name: 'Test User',
-        email: `testuser${Date.now()}@example.com`, // ✅ Unique email
-        password: 'test123',
-        role: 'MEMBER',
+        content: 'Hello from the test suite',
+        visibility: 'EVERYONE',
+        boardId: board.body.id,
       });
-    expect(res.statusCode).toBe(201);
-    expect(res.body).toHaveProperty('message');
+    expect(posted.statusCode).toBe(201);
+
+    const fetched = await request(app)
+      .get(`/api/comments/${board.body.id}`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(fetched.statusCode).toBe(200);
   });
 
-  it('should not allow signup with missing email', async () => {
-    const res = await request(app).post('/api/auth/signup').send({
-      name: 'No Email User',
-      password: 'test123',
-      role: 'MEMBER',
-    });
-    expect(res.statusCode).toBe(400); // ✅ Zod should catch missing email
-  });
-
-  it('should login a user with valid credentials', async () => {
-    const res = await request(app).post('/api/auth/login').send({
-      email: 'testuser@example.com',
-      password: 'test123',
-    });
-    expect(res.statusCode).toBe(200);
-    expect(res.body).toHaveProperty('token');
-  });
-});
-
-describe('📋 BOARD TESTS', () => {
-  it('should not allow creating board without token', async () => {
-    const res = await request(app).post('/api/boards').send({ name: 'Project X' });
-    expect(res.statusCode).toBe(401);
-  });
-});
-
-describe('💬 COMMENT TESTS', () => {
-  it('should reject comment creation without token', async () => {
+  it('rejects comment creation without a token', async () => {
     const res = await request(app).post('/api/comments').send({
       content: 'This is a comment',
       visibility: 'EVERYONE',
-      boardId: 'some-board-id',
+      boardId: '00000000-0000-0000-0000-000000000000',
     });
     expect(res.statusCode).toBe(401);
   });
-});
 
-describe('🛡️ MIDDLEWARE TESTS', () => {
-  it('should reject requests with no token', async () => {
-    const res = await request(app).get('/api/boards');
+  it('rejects creating a board without a token', async () => {
+    const res = await request(app).post('/api/boards').send({ name: 'Should Fail' });
     expect(res.statusCode).toBe(401);
   });
 });

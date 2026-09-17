@@ -16,11 +16,12 @@ import { authenticate } from '../middlewares/auth.middleware';
 import { validate } from '../middlewares/validate';
 import { boardAnonymousSchema } from '../validators/boardAnonymous.schema';
 import { boardPinSchema } from '../validators/boardPin.schema';
+import { boardSchema, joinBoardSchema } from '../validators/board.schema';
 
 const router = express.Router();
 
 // Create a new board (Only authenticated users can create, they become ADMIN by default)
-router.post('/', authenticate, createBoard);
+router.post('/', authenticate, validate(boardSchema), createBoard);
 
 // Get all boards where user is a member
 router.get('/', authenticate, getBoards);
@@ -28,7 +29,7 @@ router.get('/', authenticate, getBoards);
 // Lookup board by invite code (must be before :id route)
 router.get('/by-code/:code', authenticate, getBoardByCode);
 
-router.post('/join', authenticate, joinBoard);
+router.post('/join', authenticate, validate(joinBoardSchema), joinBoard);
 
 router.patch('/:id/anonymous', authenticate, validate(boardAnonymousSchema), updateBoardAnonymous);
 

@@ -74,7 +74,9 @@ async function getBoardMembership(userId: string, boardId: string) {
   });
 }
 
-function ensureMembershipExists<T>(membership: T | null | undefined): asserts membership is NonNullable<T> {
+function ensureMembershipExists<T>(
+  membership: T | null | undefined
+): asserts membership is NonNullable<T> {
   if (!membership) {
     const error = new Error('FORBIDDEN');
     // @ts-ignore attach status
@@ -92,7 +94,11 @@ function ensureBoardExists<T>(board: T | null): asserts board is NonNullable<T> 
   }
 }
 
-function isAdmin(userId: string, board: { createdBy: string }, membership: { role: string } | null) {
+function isAdmin(
+  userId: string,
+  board: { createdBy: string },
+  membership: { role: string } | null
+) {
   return board.createdBy === userId || membership?.role === 'ADMIN';
 }
 
@@ -201,7 +207,7 @@ export const getBoards = async (req: Request, res: Response): Promise<void> => {
 // ✅ Get a single board with visible comments
 export const getBoardById = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
 
     const membership = await getBoardMembership(req.user.id, id);
     ensureMembershipExists(membership);
@@ -268,7 +274,10 @@ export const joinBoard = async (req: Request, res: Response): Promise<void> => {
     const { code } = req.body;
     const userId = req.user.id;
 
-    const board = await prisma.board.findUnique({ where: { code }, select: { id: true, code: true } });
+    const board = await prisma.board.findUnique({
+      where: { code },
+      select: { id: true, code: true },
+    });
     if (!board) {
       res.status(404).json({ message: 'Board not found with this code' });
       return;
@@ -343,7 +352,7 @@ export const joinBoard = async (req: Request, res: Response): Promise<void> => {
 // ✅ Get board by invite code (includes minimal data)
 export const getBoardByCode = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { code } = req.params;
+    const { code } = req.params as { code: string };
 
     // TASK 3.4: Optimize query - filter active members at database level
     const board = await prisma.board.findUnique({
@@ -407,10 +416,13 @@ export const getBoardByCode = async (req: Request, res: Response): Promise<void>
 
 export const updateBoardAnonymous = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
     const { enabled } = req.body as { enabled: boolean };
 
-    const board = await prisma.board.findUnique({ where: { id }, select: { id: true, code: true, createdBy: true } });
+    const board = await prisma.board.findUnique({
+      where: { id },
+      select: { id: true, code: true, createdBy: true },
+    });
     ensureBoardExists(board);
 
     const membership = await getBoardMembership(req.user.id, id);
@@ -443,7 +455,7 @@ export const updateBoardAnonymous = async (req: Request, res: Response): Promise
 
 export const updateBoardPin = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
     const { pinned } = req.body as { pinned: boolean };
 
     const member = await prisma.boardMembership.findUnique({
@@ -480,7 +492,7 @@ export const updateBoardPin = async (req: Request, res: Response): Promise<void>
 
 export const leaveBoard = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
 
     const membership = await prisma.boardMembership.findUnique({
       where: { userId_boardId: { userId: req.user.id, boardId: id } },
@@ -527,7 +539,7 @@ export const leaveBoard = async (req: Request, res: Response): Promise<void> => 
 
 export const deleteBoard = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { id } = req.params;
+    const { id } = req.params as { id: string };
 
     const board = await prisma.board.findUnique({
       where: { id },
@@ -535,10 +547,10 @@ export const deleteBoard = async (req: Request, res: Response): Promise<void> =>
     });
     ensureBoardExists(board);
 
-    // Allow deletion if user has any membership (ACTIVE or LEFT) in the board
+    // Only the board's creator or an ADMIN member may delete it
     const membership = await getBoardMembership(req.user.id, id);
-    if (!membership) {
-      res.status(403).json({ message: 'You must be a member of this board to delete it' });
+    if (!isAdmin(req.user.id, board, membership)) {
+      res.status(403).json({ message: 'Only admins can delete this board' });
       return;
     }
 
@@ -585,9 +597,7 @@ export const bulkLeaveBoards = async (req: Request, res: Response): Promise<void
       },
     });
 
-    const validBoardIds = memberships
-      .filter((m) => m.status === 'ACTIVE')
-      .map((m) => m.boardId);
+    const validBoardIds = memberships.filter((m) => m.status === 'ACTIVE').map((m) => m.boardId);
 
     if (validBoardIds.length === 0) {
       res.status(200).json({ successCount: 0, failureCount: boardIds.length, results: [] });
@@ -673,8 +683,8 @@ export const bulkDeleteBoards = async (req: Request, res: Response): Promise<voi
 
       if (!board) continue;
 
-      // Allow deletion if user has any membership (ACTIVE or LEFT) in the board
-      if (membership) {
+      // Only the board's creator or an ADMIN member may delete it
+      if (isAdmin(req.user.id, board, membership ?? null)) {
         validBoardIds.push(boardId);
       }
     }

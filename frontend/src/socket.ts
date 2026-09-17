@@ -28,6 +28,13 @@ const socket: Socket = io(BACKEND, {
   reconnectionDelayMax: 5000,
   timeout: 20000,
   forceNew: false,
+  // Evaluated fresh on every (re)connection attempt, so it always sends whatever token is
+  // currently in localStorage — including if the socket was created before login happened.
+  // The backend verifies this in join-board before allowing a room join (see backend
+  // src/sockets/socket.ts) — previously there was no auth check here at all.
+  auth: (cb) => {
+    cb({ token: localStorage.getItem("token") || undefined });
+  },
 });
 
 // Expose socket for debugging (development and production for diagnostics)
@@ -62,6 +69,13 @@ socket.on("reconnect", (attempt) => {
   updateConnectionState(true);
   // Always log successful reconnections
   console.log("[rt] ✅ Reconnected after", attempt, "attempts");
+});
+
+socket.on("join-error", (payload: { message?: string }) => {
+  // Backend now rejects join-board when the token is missing/invalid or the user isn't an
+  // ACTIVE member of the board (see CODE_REVIEW.md C2). Surfaced here so a rejected join is
+  // visible in the console instead of silently doing nothing.
+  console.error("[rt] ❌ join-board rejected by server:", payload?.message ?? "unknown reason");
 });
 
 socket.on("connect_error", (error) => {

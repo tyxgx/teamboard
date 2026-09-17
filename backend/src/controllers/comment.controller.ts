@@ -16,6 +16,66 @@ async function getMembership(userId: string, boardId: string) {
 
 const rtmEnabledFlag = () => process.env.RTM_ENABLED === 'true';
 
+/**
+ * Broadcasts a newly-created comment over Socket.io.
+ *
+ * Two rules that were previously violated and caused a real leak (see CODE_REVIEW.md C2):
+ * 1. `actualSender` (the real name behind an "anonymous" comment) is NEVER put on a socket
+ *    broadcast. Admins can still see it via the REST fetch, which already gates it correctly
+ *    by role — this just stops it also being pushed to every socket in the room in real time.
+ * 2. ADMIN_ONLY comments are only emitted to the board's admin room (`${boardCode}:admin`,
+ *    joined only by verified admins in socket.ts's `join-board` handler), never to the
+ *    general room — previously every member received admin-only content over the socket
+ *    even though the REST path correctly hid it from them.
+ */
+function broadcastNewComment(params: {
+  io: ReturnType<typeof getIO>;
+  boardCode: string;
+  comment: CommentWithAuthor;
+  boardActivity: {
+    lastActivity: Date;
+    lastCommentPreview: string | null;
+    lastCommentAt: Date | null;
+    lastCommentVisibility: string | null;
+    lastCommentAnonymous: boolean;
+    lastCommentSenderId: string | null;
+  };
+  senderId: string;
+  clientMessageId: string | null;
+}) {
+  const { io, boardCode, comment, boardActivity, senderId, clientMessageId } = params;
+  const isAdminOnly = comment.visibility === 'ADMIN_ONLY';
+  const senderDisplay = comment.anonymous ? 'Anonymous' : comment.createdBy.name;
+
+  const activityPayload = {
+    boardCode,
+    lastActivity: boardActivity.lastActivity.toISOString(),
+    lastCommentPreview: boardActivity.lastCommentPreview,
+    lastCommentAt: boardActivity.lastCommentAt ? boardActivity.lastCommentAt.toISOString() : null,
+    lastCommentVisibility: boardActivity.lastCommentVisibility,
+    lastCommentAnonymous: boardActivity.lastCommentAnonymous,
+    lastCommentSenderId: boardActivity.lastCommentSenderId,
+    // Never reveal the real name behind an anonymous comment to the whole room.
+    lastCommentSenderName: comment.anonymous ? null : senderDisplay,
+  };
+
+  const messagePayload = {
+    id: comment.id,
+    boardCode,
+    message: comment.content,
+    visibility: comment.visibility,
+    sender: senderDisplay,
+    createdAt: comment.createdAt.toISOString(),
+    senderId,
+    clientMessageId,
+  };
+
+  const targetRoom = isAdminOnly ? `${boardCode}:admin` : boardCode;
+  io.to(targetRoom).emit('board-activity', activityPayload);
+  io.to(targetRoom).emit('receive-message', messagePayload);
+  io.to(targetRoom).emit('message:new', { ...messagePayload, clientId: clientMessageId });
+}
+
 export const createComment = async (req: Request, res: Response) => {
   const rtmEnabled = rtmEnabledFlag();
   if (!rtmEnabled) {
@@ -101,36 +161,19 @@ async function legacyCreateComment(req: Request, res: Response) {
     try {
       const io = getIO();
       const room = updatedBoard.code;
-      
+
       const roomSockets = await io.in(room).fetchSockets();
       if (roomSockets.length === 0) {
         if (process.env.NODE_ENV !== 'production') {
           console.warn(`⚠️ No connected clients in room: ${room}`);
         }
       }
-      
-      const senderDisplay = comment.anonymous ? 'Anonymous' : comment.createdBy.name;
-      const actualSender = comment.anonymous ? comment.createdBy.name : undefined;
 
-      io.to(room).emit('board-activity', {
+      broadcastNewComment({
+        io,
         boardCode: updatedBoard.code,
-        lastActivity: updatedBoard.lastActivity.toISOString(),
-        lastCommentPreview: updatedBoard.lastCommentPreview,
-        lastCommentAt: updatedBoard.lastCommentAt ? updatedBoard.lastCommentAt.toISOString() : null,
-        lastCommentVisibility: updatedBoard.lastCommentVisibility,
-        lastCommentAnonymous: updatedBoard.lastCommentAnonymous,
-        lastCommentSenderId: updatedBoard.lastCommentSenderId,
-        lastCommentSenderName: updatedBoard.lastCommentSenderName ?? comment.createdBy.name,
-      });
-
-      io.to(room).emit('receive-message', {
-        id: comment.id,
-        boardCode: updatedBoard.code,
-        message: comment.content,
-        visibility: comment.visibility,
-        sender: senderDisplay,
-        actualSender,
-        createdAt: comment.createdAt.toISOString(),
+        comment,
+        boardActivity: updatedBoard,
         senderId: req.user.id,
         clientMessageId: clientMessageId ?? null,
       });
@@ -162,7 +205,10 @@ type CommentWithAuthor = Prisma.CommentGetPayload<{
 async function realtimeCreateComment(req: Request, res: Response) {
   const startTime = Date.now();
   const { content, visibility, boardId, anonymous = false, clientMessageId } = req.body;
-  const clientId = typeof clientMessageId === 'string' && clientMessageId.trim().length > 0 ? clientMessageId.trim() : undefined;
+  const clientId =
+    typeof clientMessageId === 'string' && clientMessageId.trim().length > 0
+      ? clientMessageId.trim()
+      : undefined;
 
   try {
     const boardQueryStart = Date.now();
@@ -191,7 +237,7 @@ async function realtimeCreateComment(req: Request, res: Response) {
     if (membershipQueryTime > 100) {
       console.warn(`[perf] Membership query took ${membershipQueryTime}ms`);
     }
-    
+
     if (!membership) {
       res.status(403).json({ message: 'You are not a member of this board' });
       return;
@@ -255,7 +301,11 @@ async function realtimeCreateComment(req: Request, res: Response) {
         }
         createdNew = true;
       } catch (error) {
-        if (clientId && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        if (
+          clientId &&
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
           comment = await prisma.comment.findFirst({
             where: { boardId, clientId },
             include: {
@@ -319,42 +369,13 @@ async function realtimeCreateComment(req: Request, res: Response) {
           console.warn(`⚠️ No connected clients in room: ${room}`);
         }
 
-        const senderDisplay = comment.anonymous ? 'Anonymous' : comment.createdBy.name;
-        const actualSender = comment.anonymous ? comment.createdBy.name : undefined;
-
-        io.to(room).emit('board-activity', {
+        broadcastNewComment({
+          io,
           boardCode: updatedBoard.code,
-          lastActivity: updatedBoard.lastActivity.toISOString(),
-          lastCommentPreview: updatedBoard.lastCommentPreview,
-          lastCommentAt: updatedBoard.lastCommentAt ? updatedBoard.lastCommentAt.toISOString() : null,
-          lastCommentVisibility: updatedBoard.lastCommentVisibility,
-          lastCommentAnonymous: updatedBoard.lastCommentAnonymous,
-          lastCommentSenderId: updatedBoard.lastCommentSenderId,
-          lastCommentSenderName: updatedBoard.lastCommentSenderName ?? comment.createdBy.name,
-        });
-
-        io.to(room).emit('receive-message', {
-          id: comment.id,
-          boardCode: updatedBoard.code,
-          message: comment.content,
-          visibility: comment.visibility,
-          sender: senderDisplay,
-          actualSender,
-          createdAt: comment.createdAt.toISOString(),
+          comment,
+          boardActivity: updatedBoard,
           senderId: req.user.id,
           clientMessageId: clientId ?? null,
-        });
-
-        io.to(room).emit('message:new', {
-          id: comment.id,
-          boardCode: updatedBoard.code,
-          message: comment.content,
-          visibility: comment.visibility,
-          sender: senderDisplay,
-          actualSender,
-          createdAt: comment.createdAt.toISOString(),
-          senderId: req.user.id,
-          clientId: clientId ?? null,
         });
       } catch (error) {
         console.error('❌ Socket emit error:', error);
@@ -370,16 +391,19 @@ async function realtimeCreateComment(req: Request, res: Response) {
         id: comment.id,
         createdAt: comment.createdAt.toISOString(),
       };
-      
+
       if (process.env.NODE_ENV !== 'production' || process.env.RTM_ENABLED === 'true') {
-        console.log(`[rtm] Emitting message:ack to room "${room}" (${roomSockets.length} clients)`, {
-          clientId: clientId ?? null,
-          messageId: comment.id,
-        });
+        console.log(
+          `[rtm] Emitting message:ack to room "${room}" (${roomSockets.length} clients)`,
+          {
+            clientId: clientId ?? null,
+            messageId: comment.id,
+          }
+        );
       }
-      
+
       io.to(room).emit('message:ack', ackPayload);
-      
+
       // Also emit to sender's socket directly if they're connected
       if (roomSockets.length === 0 && process.env.NODE_ENV !== 'production') {
         console.warn(`[rtm] ⚠️ No clients in room "${room}" to receive message:ack`);
@@ -416,7 +440,7 @@ export const getComments = async (req: Request, res: Response) => {
   if (!rtmEnabled) {
     return legacyGetComments(req, res);
   }
-  const { boardId } = req.params;
+  const { boardId } = req.params as { boardId: string };
   const ctxResult = await resolveBoardContextById(boardId, req.user.id);
   if (!ctxResult.ok) {
     res.status(ctxResult.status).json({ message: ctxResult.message });
@@ -434,8 +458,7 @@ type BoardContext = {
 };
 
 type BoardContextResult =
-  | { ok: true; context: BoardContext }
-  | { ok: false; status: number; message: string };
+  { ok: true; context: BoardContext } | { ok: false; status: number; message: string };
 
 const firstQueryValue = (value: unknown): string | undefined => {
   if (Array.isArray(value)) {
@@ -453,7 +476,10 @@ const parseDateParam = (raw?: string | null): Date | null => {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
-async function resolveBoardContextById(boardId: string, userId: string): Promise<BoardContextResult> {
+async function resolveBoardContextById(
+  boardId: string,
+  userId: string
+): Promise<BoardContextResult> {
   const board = await prisma.board.findUnique({
     where: { id: boardId },
     select: { id: true, code: true, createdBy: true },
@@ -464,7 +490,10 @@ async function resolveBoardContextById(boardId: string, userId: string): Promise
   return resolveBoardContext(board, userId);
 }
 
-async function resolveBoardContextByCode(boardCode: string, userId: string): Promise<BoardContextResult> {
+async function resolveBoardContextByCode(
+  boardCode: string,
+  userId: string
+): Promise<BoardContextResult> {
   const board = await prisma.board.findUnique({
     where: { code: boardCode },
     select: { id: true, code: true, createdBy: true },
@@ -549,10 +578,7 @@ async function respondWithRealtimeComments(req: Request, res: Response, ctx: Boa
         OR: [
           { createdAt: { gt: cursorDate } },
           {
-            AND: [
-              { createdAt: { equals: cursorDate } },
-              { id: { gt: cursorIdRaw } },
-            ],
+            AND: [{ createdAt: { equals: cursorDate } }, { id: { gt: cursorIdRaw } }],
           },
         ],
       });
@@ -566,10 +592,7 @@ async function respondWithRealtimeComments(req: Request, res: Response, ctx: Boa
         OR: [
           { createdAt: { lt: beforeDate } },
           {
-            AND: [
-              { createdAt: { equals: beforeDate } },
-              { id: { lt: cursorIdRaw } },
-            ],
+            AND: [{ createdAt: { equals: beforeDate } }, { id: { lt: cursorIdRaw } }],
           },
         ],
       });
@@ -579,11 +602,7 @@ async function respondWithRealtimeComments(req: Request, res: Response, ctx: Boa
   }
 
   if (andFilters.length) {
-    const existingAnd = Array.isArray(where.AND)
-      ? where.AND
-      : where.AND
-      ? [where.AND]
-      : [];
+    const existingAnd = Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : [];
     where.AND = [...existingAnd, ...andFilters];
   }
 
@@ -592,9 +611,7 @@ async function respondWithRealtimeComments(req: Request, res: Response, ctx: Boa
     : [{ createdAt: 'asc' as const }, { id: 'asc' as const }];
 
   const total =
-    !beforeDate && !cursorDate && offset > 0
-      ? await prisma.comment.count({ where })
-      : undefined;
+    !beforeDate && !cursorDate && offset > 0 ? await prisma.comment.count({ where }) : undefined;
 
   const comments = await prisma.comment.findMany({
     where,
@@ -653,9 +670,12 @@ async function respondWithRealtimeComments(req: Request, res: Response, ctx: Boa
 
 async function legacyGetComments(req: Request, res: Response) {
   try {
-    const { boardId } = req.params;
+    const { boardId } = req.params as { boardId: string };
 
-    const board = await prisma.board.findUnique({ where: { id: boardId }, select: { createdBy: true } });
+    const board = await prisma.board.findUnique({
+      where: { id: boardId },
+      select: { createdBy: true },
+    });
     if (!board) {
       res.status(404).json({ message: 'Board not found' });
       return;
@@ -671,10 +691,7 @@ async function legacyGetComments(req: Request, res: Response) {
     const leftCutoff = isLeft && membership.leftAt ? membership.leftAt : null;
     const admin = !isLeft && (board.createdBy === req.user.id || membership.role === 'ADMIN');
 
-    const orClauses: any[] = [
-      { visibility: 'EVERYONE' },
-      { createdById: req.user.id },
-    ];
+    const orClauses: any[] = [{ visibility: 'EVERYONE' }, { createdById: req.user.id }];
     if (admin) {
       orClauses.push({ visibility: 'ADMIN_ONLY' });
     }
@@ -709,7 +726,7 @@ async function legacyGetComments(req: Request, res: Response) {
     const cursorRaw = firstQueryValue(req.query.cursor);
     const offsetRaw = firstQueryValue(req.query.offset);
     const limit = Math.min(parseInt(String(limitRaw || '50'), 10) || 50, 100);
-    
+
     let cursorDate: Date | null = null;
     if (cursorRaw) {
       const parsed = new Date(String(cursorRaw));
@@ -717,8 +734,8 @@ async function legacyGetComments(req: Request, res: Response) {
         cursorDate = parsed;
       }
     }
-    
-    const offset = cursorDate ? 0 : (parseInt(String(offsetRaw || '0'), 10) || 0);
+
+    const offset = cursorDate ? 0 : parseInt(String(offsetRaw || '0'), 10) || 0;
 
     if (cursorDate) {
       commentWhere.createdAt = {
@@ -757,7 +774,9 @@ async function legacyGetComments(req: Request, res: Response) {
     });
 
     const lastComment = shaped.length > 0 ? shaped[shaped.length - 1] : null;
-    const nextCursor = lastComment?.createdAt ? new Date(lastComment.createdAt).toISOString() : null;
+    const nextCursor = lastComment?.createdAt
+      ? new Date(lastComment.createdAt).toISOString()
+      : null;
     const hasMore = shaped.length === limit;
 
     res.json({
@@ -774,10 +793,10 @@ async function legacyGetComments(req: Request, res: Response) {
 
 async function legacyGetCommentsByCode(req: Request, res: Response) {
   try {
-    const { boardCode } = req.params;
+    const { boardCode } = req.params as { boardCode: string };
 
-    const board = await prisma.board.findUnique({ 
-      where: { code: boardCode }, 
+    const board = await prisma.board.findUnique({
+      where: { code: boardCode },
       select: { id: true, createdBy: true },
     });
     if (!board) {
@@ -795,10 +814,7 @@ async function legacyGetCommentsByCode(req: Request, res: Response) {
     const leftCutoff = isLeft && membership.leftAt ? membership.leftAt : null;
     const admin = !isLeft && (board.createdBy === req.user.id || membership.role === 'ADMIN');
 
-    const orClauses: any[] = [
-      { visibility: 'EVERYONE' },
-      { createdById: req.user.id },
-    ];
+    const orClauses: any[] = [{ visibility: 'EVERYONE' }, { createdById: req.user.id }];
     if (admin) {
       orClauses.push({ visibility: 'ADMIN_ONLY' });
     }
@@ -881,11 +897,11 @@ export const getCommentsByCode = async (req: Request, res: Response) => {
   if (!rtmEnabled) {
     return legacyGetCommentsByCode(req, res);
   }
-    const { boardCode } = req.params;
+  const { boardCode } = req.params as { boardCode: string };
   const ctxResult = await resolveBoardContextByCode(boardCode, req.user.id);
   if (!ctxResult.ok) {
     res.status(ctxResult.status).json({ message: ctxResult.message });
-      return;
+    return;
   }
   await respondWithRealtimeComments(req, res, ctxResult.context);
 };

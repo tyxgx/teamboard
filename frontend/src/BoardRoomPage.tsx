@@ -10,7 +10,7 @@ import { ChatComposer } from "./components/chat/ChatComposer";
 import { RightPanel } from "./components/chat/RightPanel";
 import { ConfirmModal } from "./components/ui/ConfirmModal";
 // TASK 2.1: Import IndexedDB cache services
-import { boardsCache, boardDetailsCache } from "./cache/cacheService";
+import { boardsCache, boardDetailsCache, messagesCache, unreadCountsCache } from "./cache/cacheService";
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL;
 const HIDDEN_STORAGE_KEY = "tb.hiddenBoards";
@@ -2314,6 +2314,14 @@ export default function BoardRoomPage() {
     setUnreadByBoard({});
     activeRoomRef.current = null;
     realtimeService.clearRoom();
+    // Clear all IndexedDB caches so the next person to log in on this device (e.g. a shared
+    // computer) never sees this user's cached board list/messages before a fresh fetch
+    // overwrites it — see CODE_REVIEW.md H2. These are fire-and-forget; navigation shouldn't
+    // wait on IndexedDB.
+    void boardsCache.clear();
+    void boardDetailsCache.clear();
+    void messagesCache.clear();
+    void unreadCountsCache.clear();
     navigate("/", { replace: true });
   }, [navigate, setHiddenBoardIds, setUnreadByBoard]);
 
