@@ -2351,10 +2351,14 @@ export default function BoardRoomPage() {
       {isInitialLoad && user ? (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white">
           <div className="w-full max-w-md px-6">
-            <p className="mb-4 text-center text-sm text-slate-600">Loading your boards...</p>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+            <div className="mb-4 flex items-center justify-center gap-2 text-slate-900">
+              <span className="grid h-7 w-7 place-items-center rounded-lg bg-emerald-500/10 text-sm text-emerald-600">◆</span>
+              <span className="text-sm font-semibold tracking-tight">TeamBoard</span>
+            </div>
+            <p className="mb-4 text-center text-sm text-slate-500">Loading your boards…</p>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
               <div
-                className="h-full bg-emerald-500 transition-all duration-300"
+                className="h-full rounded-full bg-emerald-500 transition-all duration-300"
                 style={{ width: `${initialLoadProgress}%` }}
               />
             </div>
@@ -2379,20 +2383,13 @@ export default function BoardRoomPage() {
           <>
             {switchingBoard && switchingBoard !== boardDetails?.code ? (
               <div className="flex flex-1 flex-col items-center justify-center gap-4">
-                <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-300 border-t-emerald-500" />
-                <p className="text-sm text-slate-600">Loading board...</p>
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-emerald-500" />
+                <p className="text-sm text-slate-500">Loading board…</p>
               </div>
             ) : (
               <MessageList
                 key={boardDetails.code}
-                messages={messages.map((msg) => {
-                  const normalized = normalizeMessage(msg);
-                  // Debug: log if status is "sending" to see if it's being preserved
-                  if (msg.status === "sending" || msg.status === "sent") {
-                    console.log(`[rt] Message status in render: ${msg.id || msg.clientMessageId} = ${msg.status}`);
-                  }
-                  return normalized;
-                })}
+                messages={messages.map((msg) => normalizeMessage(msg))}
                 isAdmin={isAdmin}
                 currentUserId={user?.id}
                 currentUserName={user?.name}
@@ -2431,25 +2428,31 @@ export default function BoardRoomPage() {
             />
           </>
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
-            <div>
-              <h2 className="text-3xl font-semibold text-slate-800">Welcome to TeamBoard</h2>
-              <p className="mt-2 text-sm text-slate-500">
+          <div className="relative flex flex-1 flex-col items-center justify-center gap-7 overflow-hidden px-6 text-center">
+            <div
+              className="pointer-events-none absolute inset-0"
+              style={{ background: 'var(--gradient-hero)' }}
+              aria-hidden
+            />
+            <div className="relative">
+              <span className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-2xl bg-emerald-500/10 text-2xl text-emerald-600">◆</span>
+              <h2 className="text-balance text-3xl font-semibold tracking-tight text-slate-900">Welcome to TeamBoard</h2>
+              <p className="mx-auto mt-2 max-w-sm text-sm text-slate-500">
                 Create a new board or join one with a code to get started.
               </p>
             </div>
-            <div className="flex flex-wrap justify-center gap-4">
+            <div className="relative flex flex-wrap justify-center gap-3">
               <button
                 type="button"
                 onClick={() => setCreateDialogOpen(true)}
-                className="rounded-full bg-emerald-500 px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-emerald-600"
+                className="rounded-xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_-8px_rgba(16,185,129,0.55)] transition hover:-translate-y-0.5 hover:bg-emerald-600 active:translate-y-0"
               >
                 Create board
               </button>
               <button
                 type="button"
                 onClick={() => setJoinDialogOpen(true)}
-                className="rounded-full border border-emerald-500 px-5 py-3 text-sm font-semibold text-emerald-600 transition hover:bg-emerald-50"
+                className="rounded-xl border border-emerald-500/40 bg-white px-5 py-3 text-sm font-semibold text-emerald-600 transition hover:-translate-y-0.5 hover:border-emerald-500 hover:bg-emerald-50 active:translate-y-0"
               >
                 Join with code
               </button>
@@ -2612,14 +2615,17 @@ const InputDialog = ({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4 py-6" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 px-4 py-6 backdrop-blur-sm animate-[fadeIn_0.15s_ease-out]"
+      onClick={onClose}
+    >
       <div
-        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+        className="w-full max-w-md rounded-2xl border border-black/5 bg-white p-6 shadow-2xl"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
       >
-        <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
+        <h2 className="text-lg font-semibold tracking-tight text-slate-900">{title}</h2>
         <input
           autoFocus
           value={value}
@@ -2633,10 +2639,10 @@ const InputDialog = ({
             }
           }}
           placeholder={placeholder}
-          className={`mt-4 w-full rounded-xl border px-4 py-2 text-sm focus:outline-none focus:ring-2 ${
+          className={`mt-4 w-full rounded-xl border bg-slate-50 px-4 py-2.5 text-sm transition-colors focus:bg-white focus:outline-none focus:ring-2 ${
             error
               ? "border-red-300 focus:border-red-500 focus:ring-red-200"
-              : "border-slate-200 focus:border-emerald-500 focus:ring-emerald-200"
+              : "border-slate-200 focus:border-emerald-400 focus:ring-emerald-200"
           }`}
         />
         {error ? (
@@ -2646,7 +2652,7 @@ const InputDialog = ({
           <button
             type="button"
             onClick={onClose}
-            className="order-1 w-full rounded-full border border-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-600 transition hover:bg-emerald-50 sm:order-none sm:w-auto"
+            className="order-1 w-full rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 sm:order-none sm:w-auto"
           >
             Cancel
           </button>
@@ -2654,7 +2660,7 @@ const InputDialog = ({
             type="button"
             onClick={onSubmit}
             disabled={!value.trim()}
-            className="w-full rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-emerald-300 sm:w-auto"
+            className="w-full rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow-[0_6px_16px_-6px_rgba(16,185,129,0.6)] transition hover:bg-emerald-600 active:scale-95 disabled:cursor-not-allowed disabled:bg-emerald-300 disabled:shadow-none sm:w-auto"
           >
             {confirmLabel}
           </button>

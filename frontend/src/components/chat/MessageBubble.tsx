@@ -83,7 +83,7 @@ export const MessageBubble = React.memo(({
           <div className={`mt-1.5 flex items-center gap-1.5 ${
             isOwn ? "justify-end text-emerald-50" : "justify-start text-slate-400"
           }`}>
-            {timeLabel && <span className="text-[11px]">{timeLabel}</span>}
+            {timeLabel && <span className="text-[11px] tabular-nums">{timeLabel}</span>}
             {isOwn && (
               <span className="text-[11px] opacity-70">✓</span>
             )}
