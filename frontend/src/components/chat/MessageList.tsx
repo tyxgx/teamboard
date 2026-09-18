@@ -19,6 +19,7 @@ export type ChatMessage = {
   senderId?: string;
   status?: "sending" | "sent" | "failed";
   parentId?: string | null;
+  editedAt?: string | null;
   replyTo?: { id: string; sender: string; snippet: string } | null;
   attachment?: { id: string; mime: string; size: number } | null;
 };
@@ -37,6 +38,8 @@ type MessageListProps = {
   reactionsById?: Record<string, ReactionSummary[]>;
   onToggleReaction?: (messageId: string, emoji: string) => void;
   onReply?: (message: ChatMessage) => void;
+  onEditMessage?: (message: ChatMessage) => void;
+  onDeleteMessage?: (message: ChatMessage) => void;
   /** "Seen by …" label shown under the caller's most recent message */
   seenBy?: { messageId: string; label: string } | null;
 };
@@ -73,6 +76,8 @@ export const MessageList = ({
   reactionsById,
   onToggleReaction,
   onReply,
+  onEditMessage,
+  onDeleteMessage,
   seenBy,
 }: MessageListProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -231,14 +236,21 @@ export const MessageList = ({
   }, [grouped]);
 
   // TASK 2.2: Only virtualize if we have more than 50 messages
-  const bubbleExtras = (msg: ChatMessage) => ({
+  const bubbleExtras = (msg: ChatMessage) => {
+    const own = Boolean(currentUserId && (msg.userId === currentUserId || msg.senderId === currentUserId));
+    const sent = Boolean(msg.id) && msg.status !== "sending" && msg.status !== "failed";
+    return {
+    edited: Boolean(msg.editedAt),
+    onEdit: own && sent && onEditMessage ? () => onEditMessage(msg) : undefined,
+    onDelete: (own || isAdmin) && sent && onDeleteMessage ? () => onDeleteMessage(msg) : undefined,
     replyTo: msg.replyTo ?? null,
     image: msg.attachment ? <AttachmentImage id={msg.attachment.id} mime={msg.attachment.mime} /> : undefined,
     reactions: msg.id ? reactionsById?.[msg.id] : undefined,
     onReact: msg.id && onToggleReaction ? (emoji: string) => onToggleReaction(msg.id!, emoji) : undefined,
     onReply: msg.id && onReply ? () => onReply(msg) : undefined,
     seenBy: seenBy && msg.id === seenBy.messageId ? seenBy.label : undefined,
-  });
+  };
+  };
 
   // react-window needs a height per row. Messages vary (quotes, images, reactions, long text), so estimate.
   const estimateRowHeight = (index: number) => {

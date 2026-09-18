@@ -40,10 +40,14 @@ export const MessageActions = ({
   isOwn,
   onReact,
   onReply,
+  onEdit,
+  onDelete,
 }: {
   isOwn: boolean;
   onReact: (emoji: string) => void;
   onReply: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
 }) => (
   <div
     className={`absolute -top-3 z-10 flex items-center gap-0.5 rounded-full border border-slate-200 bg-white px-1 py-0.5 text-sm opacity-0 shadow-md transition group-hover/msg:opacity-100 group-focus-within/msg:opacity-100 ${
@@ -70,5 +74,15 @@ export const MessageActions = ({
     >
       Reply
     </button>
+    {onEdit ? (
+      <button type="button" onClick={onEdit} aria-label="Edit message" className="rounded-full px-2 py-0.5 text-xs font-semibold text-slate-600 hover:bg-slate-100">
+        Edit
+      </button>
+    ) : null}
+    {onDelete ? (
+      <button type="button" onClick={onDelete} aria-label="Delete message" className="rounded-full px-2 py-0.5 text-xs font-semibold text-red-500 hover:bg-red-500/10">
+        Delete
+      </button>
+    ) : null}
   </div>
 );

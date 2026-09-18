@@ -159,6 +159,7 @@ const mapServerMessage = (
   createdAt: payload.createdAt ?? new Date().toISOString(),
   userId: payload.userId ?? undefined,
   senderId: payload.senderId ?? undefined,
+  editedAt: payload.editedAt ?? null,
   replyTo: payload.replyTo ?? null,
   attachment: payload.attachment ?? null,
 });
@@ -223,6 +224,8 @@ export default function BoardRoomPage() {
   const reactionsLoadedRef = useRef<Set<string>>(new Set());
   const [reads, setReads] = useState<Record<string, string>>({});
   const [searchOpen, setSearchOpen] = useState(false);
+  const [editing, setEditing] = useState<{ id: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string } | null>(null);
   const [typingNames, setTypingNames] = useState<string[]>([]);
   const typingTimersRef = useRef<Map<string, number>>(new Map());
   const lastTypingEmitRef = useRef(0);
@@ -1680,6 +1683,22 @@ export default function BoardRoomPage() {
   const handleSendMessage = useCallback(async () => {
     if (!user || !boardDetails || !boardDetails.id || !boardDetails.code) return;
     const trimmed = composerValue.trim();
+    if (editing) {
+      const headers = getAuthHeaders();
+      if (!headers || !trimmed) return;
+      const target = editing;
+      try {
+        const res = await axios.patch(`${BACKEND}/api/messages/${target.id}`, { content: trimmed }, { headers });
+        setMessages((prev) =>
+          prev.map((m) => (m.id === target.id ? { ...m, message: res.data.message, editedAt: res.data.editedAt } : m))
+        );
+        setEditing(null);
+        setComposerValue("");
+      } catch (error: any) {
+        toast.error(error?.response?.data?.message ?? "Couldn't save the edit.");
+      }
+      return;
+    }
     if (!trimmed && !pendingAttachment) return;
     // Members can send admin-only messages - no restriction needed
     const effectiveVisibility = visibility;
@@ -1837,6 +1856,7 @@ export default function BoardRoomPage() {
     composerValue,
     getAuthHeaders,
     handleAuthFailure,
+    editing,
     isAdmin,
     pendingAttachment,
     replyingTo,
@@ -1924,12 +1944,67 @@ export default function BoardRoomPage() {
     [boardDetails?.id, getAuthHeaders, handleAuthFailure, messages]
   );
 
-  // ---- Reactions -------------------------------------------------------------------------------
   const authHeaders = useCallback(() => {
     const token = localStorage.getItem("token");
     return token ? { Authorization: `Bearer ${token}` } : undefined;
   }, []);
 
+  // ---- Edit / delete ------------------------------------------------------------------------------
+  const handleEditMessage = useCallback((message: ChatMessage) => {
+    if (!message.id) return;
+    setReplyingTo(null);
+    setEditing({ id: message.id });
+    setComposerValue(message.message);
+  }, []);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditing(null);
+    setComposerValue("");
+  }, []);
+
+  const handleEditLast = useCallback(() => {
+    if (!user) return;
+    const last = [...messages]
+      .reverse()
+      .find((m) => m.id && !m.system && m.status !== "failed" && (m.userId === user.id || m.senderId === user.id));
+    if (last) handleEditMessage(last);
+  }, [messages, user, handleEditMessage]);
+
+  const handleConfirmDelete = useCallback(async () => {
+    const target = deleteTarget;
+    setDeleteTarget(null);
+    const headers = authHeaders();
+    if (!target || !headers) return;
+    try {
+      await axios.delete(`${BACKEND}/api/messages/${target.id}`, { headers });
+      setMessages((prev) => prev.filter((m) => m.id !== target.id));
+      if (editing?.id === target.id) handleCancelEdit();
+    } catch (error: any) {
+      toast.error(error?.response?.data?.message ?? "Couldn't delete the message.");
+    }
+  }, [deleteTarget, authHeaders, editing, handleCancelEdit]);
+
+  useEffect(() => {
+    const code = boardDetails?.code;
+    if (!code) return;
+    const onEdited = (p: { boardCode: string; id: string; message: string; editedAt: string | null }) => {
+      if (p.boardCode !== code) return;
+      setMessages((prev) => prev.map((m) => (m.id === p.id ? { ...m, message: p.message, editedAt: p.editedAt } : m)));
+    };
+    const onDeleted = (p: { boardCode: string; id: string }) => {
+      if (p.boardCode !== code) return;
+      setMessages((prev) => prev.filter((m) => m.id !== p.id));
+      setEditing((cur) => (cur?.id === p.id ? null : cur));
+    };
+    socketClient.on("message:edited", onEdited);
+    socketClient.on("message:deleted", onDeleted);
+    return () => {
+      socketClient.off("message:edited", onEdited);
+      socketClient.off("message:deleted", onDeleted);
+    };
+  }, [boardDetails?.code]);
+
+  // ---- Reactions -------------------------------------------------------------------------------
   useEffect(() => {
     reactionsLoadedRef.current = new Set();
     setReactionsById({});
@@ -2751,6 +2826,8 @@ export default function BoardRoomPage() {
                 reactionsById={reactionsById}
                 onToggleReaction={handleToggleReaction}
                 onReply={readOnly ? undefined : handleReplyTo}
+                onEditMessage={readOnly ? undefined : handleEditMessage}
+                onDeleteMessage={readOnly ? undefined : (m) => m.id && setDeleteTarget({ id: m.id })}
                 seenBy={seenBy}
               />
             )}
@@ -2786,6 +2863,9 @@ export default function BoardRoomPage() {
               uploading={uploadingImage}
               onPickImage={handlePickImage}
               onClearAttachment={handleClearAttachment}
+              editing={Boolean(editing)}
+              onCancelEdit={handleCancelEdit}
+              onEditLast={readOnly ? undefined : handleEditLast}
             />
           </>
         ) : (
@@ -2823,6 +2903,15 @@ export default function BoardRoomPage() {
       </main>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={paletteCommands} />
+      <ConfirmModal
+        open={Boolean(deleteTarget)}
+        title="Delete this message?"
+        description="It will be removed for everyone on this board. This can't be undone."
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
       <SearchDialog open={searchOpen} boardId={boardDetails?.id} boardName={boardDetails?.name} onClose={() => setSearchOpen(false)} />
       <ShortcutsSheet open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 

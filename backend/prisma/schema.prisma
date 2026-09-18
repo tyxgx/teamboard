@@ -78,6 +78,8 @@ model Comment {
   clientId    String?
   // Reply-to: points at the message being answered (same board, checked in the controller)
   parentId    String?
+  // Set when the author edits the message after sending
+  editedAt    DateTime?
 
   createdBy User  @relation(fields: [createdById], references: [id])
   board     Board @relation(fields: [boardId], references: [id])

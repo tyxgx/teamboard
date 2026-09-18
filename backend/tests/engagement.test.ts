@@ -229,3 +229,83 @@ describe('image attachments', () => {
     expect(res.statusCode).toBe(400);
   });
 });
+
+describe('edit and delete', () => {
+  const patch = (u: TestUser, id: string, content: string) =>
+    request(app).patch(`/api/messages/${id}`).set(auth(u)).send({ content });
+  const del = (u: TestUser, id: string) => request(app).delete(`/api/messages/${id}`).set(auth(u));
+
+  it('the author can edit; the text and editedAt come back in the list', async () => {
+    const { member, boardId, code } = await setup();
+    const msg = await post(member, { content: 'typo hre', visibility: 'EVERYONE', boardId });
+    const res = await patch(member, msg.body.id, 'typo here');
+    expect(res.statusCode).toBe(200);
+    expect(res.body.message).toBe('typo here');
+    const list = await request(app).get(`/api/comments/by-code/${code}`).set(auth(member));
+    const found = list.body.comments.find((c: any) => c.id === msg.body.id);
+    expect(found.message).toBe('typo here');
+    expect(found.editedAt).toBeTruthy();
+  });
+
+  it("nobody else can edit someone's message, not even an admin", async () => {
+    const { admin, member, boardId } = await setup();
+    const msg = await post(member, { content: 'mine', visibility: 'EVERYONE', boardId });
+    expect((await patch(admin, msg.body.id, 'hijack')).statusCode).toBe(403);
+  });
+
+  it('cannot blank out a text-only message', async () => {
+    const { member, boardId } = await setup();
+    const msg = await post(member, { content: 'x', visibility: 'EVERYONE', boardId });
+    expect((await patch(member, msg.body.id, '   ')).statusCode).toBe(400);
+  });
+
+  it('the author can delete their own message; a plain member cannot delete others', async () => {
+    const { admin, member, boardId } = await setup();
+    const a = await post(admin, { content: "admin's", visibility: 'EVERYONE', boardId });
+    expect((await del(member, a.body.id)).statusCode).toBe(403);
+    const m = await post(member, { content: "member's", visibility: 'EVERYONE', boardId });
+    expect((await del(member, m.body.id)).statusCode).toBe(204);
+    expect((await patch(member, m.body.id, 'gone')).statusCode).toBe(404);
+  });
+
+  it('an admin can moderate (delete) any message they can see', async () => {
+    const { admin, member, boardId } = await setup();
+    const m = await post(member, { content: 'spam', visibility: 'EVERYONE', boardId });
+    expect((await del(admin, m.body.id)).statusCode).toBe(204);
+  });
+
+  it('cannot edit or delete an admin-only message you cannot see, and outsiders are rejected', async () => {
+    const { admin, member, outsider, boardId } = await setup();
+    const hidden = await post(admin, { content: 'secret', visibility: 'ADMIN_ONLY', boardId });
+    expect((await patch(member, hidden.body.id, 'x')).statusCode).toBe(404);
+    expect((await del(member, hidden.body.id)).statusCode).toBe(404);
+    const open = await post(admin, { content: 'open', visibility: 'EVERYONE', boardId });
+    expect((await del(outsider, open.body.id)).statusCode).toBe(404);
+  });
+
+  it('deleting a parent keeps the reply and clears its quote', async () => {
+    const { admin, member, boardId, code } = await setup();
+    const parent = await post(admin, { content: 'question', visibility: 'EVERYONE', boardId });
+    const reply = await post(member, { content: 'answer', visibility: 'EVERYONE', boardId, parentId: parent.body.id });
+    expect((await del(admin, parent.body.id)).statusCode).toBe(204);
+    const list = await request(app).get(`/api/comments/by-code/${code}`).set(auth(member));
+    const found = list.body.comments.find((c: any) => c.id === reply.body.id);
+    expect(found).toBeTruthy();
+    expect(found.replyTo).toBeNull();
+  });
+});
+
+describe('board preview after edit/delete', () => {
+  it('does not leave removed or old text behind in the board list preview', async () => {
+    const { member, boardId } = await setup();
+    const msg = await post(member, { content: 'first version', visibility: 'EVERYONE', boardId });
+    await request(app).patch(`/api/messages/${msg.body.id}`).set(auth(member)).send({ content: 'second version' });
+    let boards = await request(app).get('/api/boards').set(auth(member));
+    expect(boards.body.find((b: any) => b.id === boardId).lastCommentPreview).toBe('second version');
+
+    await request(app).delete(`/api/messages/${msg.body.id}`).set(auth(member));
+    boards = await request(app).get('/api/boards').set(auth(member));
+    const b = boards.body.find((x: any) => x.id === boardId);
+    expect(b.lastCommentPreview ?? null).toBeNull();
+  });
+});

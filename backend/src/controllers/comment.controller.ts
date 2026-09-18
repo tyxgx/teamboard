@@ -689,6 +689,7 @@ async function respondWithRealtimeComments(req: Request, res: Response, ctx: Boa
       userId: c.createdById,
       senderId: c.createdById,
       clientMessageId: c.clientId ?? null,
+      editedAt: c.editedAt,
       replyTo: replyToPreview(c.parent, { id: req.user.id, admin: ctx.admin }),
       attachment: c.attachment,
     };

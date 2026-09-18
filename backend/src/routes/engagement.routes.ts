@@ -7,6 +7,7 @@ import {
   searchMessages,
   toggleReaction,
 } from '../controllers/engagement.controller';
+import { deleteMessage, editMessage } from '../controllers/messageActions.controller';
 import {
   ALLOWED_IMAGE_TYPES,
   MAX_ATTACHMENT_BYTES,
@@ -17,6 +18,8 @@ import {
 const router = express.Router();
 
 router.post('/messages/:commentId/reactions', authenticate, toggleReaction);
+router.patch('/messages/:commentId', authenticate, editMessage);
+router.delete('/messages/:commentId', authenticate, deleteMessage);
 router.get('/boards/:boardId/reactions', authenticate, getReactions);
 router.put('/boards/:boardId/read', authenticate, markRead);
 router.get('/boards/:boardId/reads', authenticate, getReads);

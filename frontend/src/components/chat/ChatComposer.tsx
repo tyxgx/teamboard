@@ -20,6 +20,9 @@ type ChatComposerProps = {
   uploading?: boolean;
   onPickImage?: (file: File) => void;
   onClearAttachment?: () => void;
+  editing?: boolean;
+  onCancelEdit?: () => void;
+  onEditLast?: () => void;
 };
 
 export const ChatComposer = ({
@@ -40,6 +43,9 @@ export const ChatComposer = ({
   uploading = false,
   onPickImage,
   onClearAttachment,
+  editing = false,
+  onCancelEdit,
+  onEditLast,
 }: ChatComposerProps) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -67,9 +73,13 @@ export const ChatComposer = ({
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       trySendMessage();
-    } else if (event.key === "Escape" && replyingTo) {
+    } else if (event.key === "Escape" && (replyingTo || editing)) {
       event.stopPropagation();
-      onCancelReply?.();
+      if (editing) onCancelEdit?.();
+      else onCancelReply?.();
+    } else if (event.key === "ArrowUp" && !value && !editing && onEditLast) {
+      event.preventDefault();
+      onEditLast();
     }
   };
 
@@ -98,6 +108,13 @@ export const ChatComposer = ({
       {readOnly && readOnlyMessage ? (
         <div className="mx-auto mb-3 max-w-3xl rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-medium text-amber-700">
           {readOnlyMessage}
+        </div>
+      ) : null}
+
+      {editing ? (
+        <div className="mx-auto mb-2 flex max-w-3xl items-center justify-between gap-3 rounded-xl border-l-2 border-amber-500 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          <span className="font-semibold">Editing message · Enter to save, Esc to cancel</span>
+          <button type="button" onClick={onCancelEdit} aria-label="Cancel edit" className="rounded-md px-1.5 text-base leading-none hover:bg-amber-100">×</button>
         </div>
       ) : null}
 

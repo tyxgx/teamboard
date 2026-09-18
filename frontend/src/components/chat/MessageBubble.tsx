@@ -15,6 +15,9 @@ type MessageBubbleProps = {
   onReact?: (emoji: string) => void;
   onReply?: () => void;
   seenBy?: string;
+  edited?: boolean;
+  onEdit?: () => void;
+  onDelete?: () => void;
 };
 
 const formatTime = (timestamp?: string) => {
@@ -38,6 +41,9 @@ export const MessageBubble = React.memo(({
   onReact,
   onReply,
   seenBy,
+  edited,
+  onEdit,
+  onDelete,
 }: MessageBubbleProps) => {
   const timeLabel = formatTime(timestamp);
   const alignment = isOwn ? "justify-end" : "justify-start";
@@ -86,7 +92,7 @@ export const MessageBubble = React.memo(({
           </div>
         )}
 
-        {onReact && onReply ? <MessageActions isOwn={isOwn} onReact={onReact} onReply={onReply} /> : null}
+        {onReact && onReply ? <MessageActions isOwn={isOwn} onReact={onReact} onReply={onReply} onEdit={onEdit} onDelete={onDelete} /> : null}
 
         {replyTo ? (
           <div
@@ -114,6 +120,7 @@ export const MessageBubble = React.memo(({
             isOwn ? "justify-end text-emerald-50" : "justify-start text-slate-400"
           }`}>
             {timeLabel && <span className="text-[11px] tabular-nums">{timeLabel}</span>}
+            {edited && <span className="text-[11px] opacity-70">(edited)</span>}
             {isOwn && (
               <span className="text-[11px] opacity-70">✓</span>
             )}

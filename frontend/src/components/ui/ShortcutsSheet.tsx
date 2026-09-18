@@ -10,7 +10,8 @@ const rows: [string, string][] = [
   ["?", "Show this sheet"],
   ["Enter", "Send message"],
   ["Shift Enter", "New line in message"],
-  ["Esc", "Close dialog or panel"],
+  ["↑ (empty composer)", "Edit your last message"],
+  ["Esc", "Close dialog, cancel reply or edit"],
 ];
 
 export const ShortcutsSheet = ({ open, onClose }: { open: boolean; onClose: () => void }) => {
