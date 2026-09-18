@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useRef } from "react";
+import { useDialogFocus } from "../../hooks/useDialogFocus";
 import type { ReactNode } from "react";
 
 type ConfirmModalProps = {
@@ -22,16 +23,8 @@ export const ConfirmModal = ({
   onConfirm,
   onCancel,
 }: ConfirmModalProps) => {
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onCancel();
-      }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, onCancel]);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(open, dialogRef, onCancel);
 
   if (!open) return null;
 
@@ -40,13 +33,15 @@ export const ConfirmModal = ({
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 px-4 py-6 backdrop-blur-sm animate-[fadeIn_0.15s_ease-out]"
       role="dialog"
       aria-modal="true"
+      aria-labelledby="confirm-title"
       onClick={onCancel}
     >
       <div
+        ref={dialogRef}
         className="w-full max-w-md rounded-2xl border border-black/5 bg-white p-6 shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
-        <h2 className="text-lg font-semibold tracking-tight text-slate-900">{title}</h2>
+        <h2 id="confirm-title" className="text-lg font-semibold tracking-tight text-slate-900">{title}</h2>
         {description ? (
           typeof description === "string" ? (
             <p className="mt-2 text-sm leading-relaxed text-slate-600">{description}</p>

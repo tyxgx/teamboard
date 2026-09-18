@@ -1,3 +1,6 @@
+import { toast } from "sonner";
+import { CommandPalette, type PaletteCommand } from "./components/ui/CommandPalette";
+import { ShortcutsSheet } from "./components/ui/ShortcutsSheet";
 import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
@@ -203,6 +206,11 @@ export default function BoardRoomPage() {
   const [optimisticBoardName, setOptimisticBoardName] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [joinDialogOpen, setJoinDialogOpen] = useState(false);
+  const [typingNames, setTypingNames] = useState<string[]>([]);
+  const typingTimersRef = useRef<Map<string, number>>(new Map());
+  const lastTypingEmitRef = useRef(0);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [createBoardError, setCreateBoardError] = useState<string | null>(null);
   const [joinBoardError, setJoinBoardError] = useState<string | null>(null);
   const [initialLoadProgress, setInitialLoadProgress] = useState(0);
@@ -1711,6 +1719,11 @@ export default function BoardRoomPage() {
           return;
         }
         console.error("Failed to send message", error);
+        if (error?.response?.status === 429) {
+          toast.error("You're sending messages too fast. Wait a moment and retry.");
+        } else {
+          toast.error("Message not sent. Use Retry on the message.");
+        }
       }
     };
 
@@ -1775,6 +1788,11 @@ export default function BoardRoomPage() {
           return;
         }
         console.error("Failed to send message", error);
+        if (error?.response?.status === 429) {
+          toast.error("You're sending messages too fast. Wait a moment and retry.");
+        } else {
+          toast.error("Message not sent. Use Retry on the message.");
+        }
       }
     };
 
@@ -1797,6 +1815,83 @@ export default function BoardRoomPage() {
     visibility,
   ]);
 
+
+  // Typing indicators: entries expire on their own, so a dropped "stopped typing" can't stick forever.
+  useEffect(() => {
+    const code = boardDetails?.code;
+    const timers = typingTimersRef.current;
+    if (!code) return;
+    const onTyping = (payload: { boardCode: string; name: string | null }) => {
+      if (payload.boardCode !== code) return;
+      const label = payload.name ?? "Someone";
+      const existing = timers.get(label);
+      if (existing) window.clearTimeout(existing);
+      timers.set(
+        label,
+        window.setTimeout(() => {
+          timers.delete(label);
+          setTypingNames(Array.from(timers.keys()));
+        }, 3500)
+      );
+      setTypingNames(Array.from(timers.keys()));
+    };
+    socketClient.on("typing", onTyping);
+    return () => {
+      socketClient.off("typing", onTyping);
+      timers.forEach((t) => window.clearTimeout(t));
+      timers.clear();
+      setTypingNames([]);
+    };
+  }, [boardDetails?.code]);
+
+  const handleComposerChange = useCallback(
+    (value: string) => {
+      setComposerValue(value);
+      const code = boardDetails?.code;
+      const now = Date.now();
+      if (!code || !value || now - lastTypingEmitRef.current < 2000) return;
+      lastTypingEmitRef.current = now;
+      socketClient.emit("typing", { boardCode: code, anonymous: anonymousMode });
+    },
+    [boardDetails?.code, anonymousMode]
+  );
+
+  const handleRetryMessage = useCallback(
+    async (clientMessageId: string) => {
+      if (!boardDetails?.id) return;
+      const failed = messages.find((m) => m.clientMessageId === clientMessageId);
+      const headers = getAuthHeaders();
+      if (!failed || !headers) return;
+      pendingMessagesRef.current.add(clientMessageId);
+      setMessages((prev) =>
+        prev.map((m) => (m.clientMessageId === clientMessageId ? { ...m, status: "sending" } : m))
+      );
+      try {
+        // Same clientMessageId: the backend dedupes on (boardId, clientId), so a retry can't double-post.
+        await realtimeService.handleSend(
+          {
+            content: failed.message,
+            visibility: failed.visibility === "ADMIN_ONLY" ? "ADMIN_ONLY" : "EVERYONE",
+            boardId: boardDetails.id,
+            anonymous: failed.sender === "Anonymous",
+            clientMessageId,
+          },
+          headers
+        );
+      } catch (error: any) {
+        pendingMessagesRef.current.delete(clientMessageId);
+        setMessages((prev) =>
+          prev.map((m) => (m.clientMessageId === clientMessageId ? { ...m, status: "failed" } : m))
+        );
+        if (error?.response?.status === 401) {
+          handleAuthFailure();
+          return;
+        }
+        toast.error(error?.response?.status === 429 ? "Slow down a little, then retry." : "Still couldn't send. Check your connection.");
+      }
+    },
+    [boardDetails?.id, getAuthHeaders, handleAuthFailure, messages]
+  );
 
   const handleRetryComments = useCallback(async () => {
     if (!boardDetails?.id || !boardDetails.code) return;
@@ -1912,6 +2007,7 @@ export default function BoardRoomPage() {
       }
       const errorMessage = error?.response?.data?.message || "Unable to create board. Please try again.";
       setCreateBoardError(errorMessage);
+      toast.error(errorMessage);
       console.error("Unable to create board", error);
     }
   }, [createBoardName, getAuthHeaders, handleAuthFailure, loadBoards, navigate]);
@@ -1941,6 +2037,7 @@ export default function BoardRoomPage() {
       }
       const errorMessage = error?.response?.data?.message || "Unable to join board. Please check the code and try again.";
       setJoinBoardError(errorMessage);
+      toast.error(errorMessage);
       console.error("Unable to join board", error);
     }
   }, [getAuthHeaders, handleAuthFailure, joinCodeValue, debouncedLoadBoards, navigate]);
@@ -2285,7 +2382,11 @@ export default function BoardRoomPage() {
     const url = `${window.location.origin}/board/${code}`;
     navigator.clipboard
       .writeText(url)
-      .catch((error) => console.error("Failed to copy invite link", error));
+      .then(() => toast.success("Invite link copied"))
+      .catch((error) => {
+        console.error("Failed to copy invite link", error);
+        toast.error("Couldn't copy the link. Copy it from the address bar instead.");
+      });
   }, []);
 
   const handleLogout = useCallback(() => {
@@ -2346,6 +2447,40 @@ export default function BoardRoomPage() {
     onBulkDeleteBoards: handleBulkDeleteBoards,
   } as const;
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+        return;
+      }
+      const t = e.target as HTMLElement | null;
+      const typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+      if (e.key === "?" && !typing) {
+        e.preventDefault();
+        setShortcutsOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const paletteCommands = useMemo<PaletteCommand[]>(
+    () => [
+      ...sidebarBoards.map((b) => ({
+        id: `board-${b.code}`,
+        label: b.name,
+        hint: b.code === boardDetails?.code ? "current" : b.code,
+        section: "Boards" as const,
+        run: () => handleSelectBoard(b.code),
+      })),
+      { id: "create", label: "Create board", section: "Actions" as const, run: () => setCreateDialogOpen(true) },
+      { id: "join", label: "Join board with code", section: "Actions" as const, run: () => setJoinDialogOpen(true) },
+      { id: "shortcuts", label: "Keyboard shortcuts", hint: "?", section: "Actions" as const, run: () => setShortcutsOpen(true) },
+    ],
+    [sidebarBoards, boardDetails?.code, handleSelectBoard]
+  );
+
   return (
     <div className="flex h-screen overflow-hidden bg-slate-100">
       {isInitialLoad && user ? (
@@ -2377,6 +2512,7 @@ export default function BoardRoomPage() {
             }
           }}
           socketConnected={socketConnected}
+          onOpenPalette={() => setPaletteOpen(true)}
         />
 
         {boardDetails ? (
@@ -2397,6 +2533,8 @@ export default function BoardRoomPage() {
                 isLoadingOlder={loadingOlderMessages}
                 onLoadOlder={boardDetails.id ? handleLoadOlder : undefined}
                 hasMoreMessages={hasMoreMessages}
+                onRetryMessage={handleRetryMessage}
+                typingIndicator={typingNames}
               />
             )}
 
@@ -2415,7 +2553,7 @@ export default function BoardRoomPage() {
 
             <ChatComposer
               value={composerValue}
-              onChange={setComposerValue}
+              onChange={handleComposerChange}
               onSend={handleSendMessage}
               anonymous={anonymousMode}
               onToggleAnonymous={setAnonymousMode}
@@ -2460,6 +2598,9 @@ export default function BoardRoomPage() {
           </div>
         )}
       </main>
+
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={paletteCommands} />
+      <ShortcutsSheet open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
       <RightPanel
         board={boardDetails}

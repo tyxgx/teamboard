@@ -13,6 +13,18 @@
 
     <!-- ✅ Google Sign-In script -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
+      <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("tb.theme");
+          if (t !== "light" && t !== "dark") {
+            t = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          }
+          if (t === "dark") document.documentElement.classList.add("dark");
+          document.documentElement.style.colorScheme = t;
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

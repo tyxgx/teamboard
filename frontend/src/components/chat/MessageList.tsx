@@ -28,6 +28,7 @@ type MessageListProps = {
   isLoadingOlder?: boolean;
   onLoadOlder?: () => void;
   hasMoreMessages?: boolean;
+  onRetryMessage?: (clientMessageId: string) => void;
 };
 
 const humanizeDate = (timestamp?: string) => {
@@ -58,6 +59,7 @@ export const MessageList = ({
   isLoadingOlder = false,
   onLoadOlder,
   hasMoreMessages,
+  onRetryMessage,
 }: MessageListProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useListRef(null);
@@ -289,7 +291,13 @@ export const MessageList = ({
             <span className="ml-2 inline-flex items-center text-[11px] opacity-70">✓</span>
           ) : null}
           {msg.status === "failed" ? (
-            <span className="ml-2 align-middle text-[10px] text-red-500">failed</span>
+            <button
+                type="button"
+                onClick={() => msg.clientMessageId && onRetryMessage?.(msg.clientMessageId)}
+                className="ml-2 inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 align-middle text-[10px] font-semibold text-red-500 hover:bg-red-500/20"
+              >
+                Not sent · Retry
+              </button>
           ) : null}
         </MessageBubble>
       </div>
@@ -300,7 +308,7 @@ export const MessageList = ({
     <div className="relative flex-1 overflow-hidden">
       {shouldVirtualize ? (
         // TASK 2.2: Virtualized rendering for large message lists
-        <div ref={containerRef} className="h-full bg-gradient-to-b from-slate-50 via-slate-50/80 to-slate-100/50">
+        <div ref={containerRef} role="log" aria-label="Messages" className="h-full bg-gradient-to-b from-slate-50 via-slate-50/80 to-slate-100/50">
           {/* Loading indicator for older messages */}
           {(isLoadingOlder || isLoadingOlderState) && messages.length > 0 && hasMoreMessages !== false ? (
             <div className="flex justify-center py-2">
@@ -333,6 +341,8 @@ export const MessageList = ({
         // Non-virtualized rendering for small message lists (<50 messages)
         <div
           ref={containerRef}
+          role="log"
+          aria-label="Messages"
           onScroll={updateNearBottom}
           className="h-full overflow-y-auto bg-gradient-to-b from-slate-50 via-slate-50/80 to-slate-100/50 py-4"
           style={{ scrollBehavior: "smooth" }}
@@ -427,7 +437,13 @@ export const MessageList = ({
                               <span className="ml-2 inline-flex items-center text-[11px] opacity-70">✓</span>
                             ) : null}
                             {msg.status === "failed" ? (
-                              <span className="ml-2 align-middle text-[10px] text-red-500">failed</span>
+                              <button
+                type="button"
+                onClick={() => msg.clientMessageId && onRetryMessage?.(msg.clientMessageId)}
+                className="ml-2 inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 align-middle text-[10px] font-semibold text-red-500 hover:bg-red-500/20"
+              >
+                Not sent · Retry
+              </button>
                             ) : null}
                           </MessageBubble>
                         </div>
@@ -439,8 +455,8 @@ export const MessageList = ({
             )}
 
             {typingIndicator.length ? (
-              <div className="ml-12 max-w-max rounded-full bg-slate-100 px-4 py-2 text-xs text-slate-500">
-                {typingIndicator.join(", ")} typing…
+              <div aria-live="polite" className="ml-12 max-w-max rounded-full bg-slate-100 px-4 py-2 text-xs text-slate-500">
+                {typingIndicator.join(", ")} {typingIndicator.length > 1 ? "are" : "is"} typing…
               </div>
             ) : null}
           </div>
