@@ -2,6 +2,8 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { List, useListRef } from "react-window";
 import type { RowComponentProps } from "react-window";
 import { MessageBubble } from "./MessageBubble";
+import { AttachmentImage } from "./AttachmentImage";
+import type { ReactionSummary } from "./ReactionBar";
 
 export type ChatMessage = {
   id?: string;
@@ -16,6 +18,9 @@ export type ChatMessage = {
   userId?: string;
   senderId?: string;
   status?: "sending" | "sent" | "failed";
+  parentId?: string | null;
+  replyTo?: { id: string; sender: string; snippet: string } | null;
+  attachment?: { id: string; mime: string; size: number } | null;
 };
 
 type MessageListProps = {
@@ -29,6 +34,11 @@ type MessageListProps = {
   onLoadOlder?: () => void;
   hasMoreMessages?: boolean;
   onRetryMessage?: (clientMessageId: string) => void;
+  reactionsById?: Record<string, ReactionSummary[]>;
+  onToggleReaction?: (messageId: string, emoji: string) => void;
+  onReply?: (message: ChatMessage) => void;
+  /** "Seen by …" label shown under the caller's most recent message */
+  seenBy?: { messageId: string; label: string } | null;
 };
 
 const humanizeDate = (timestamp?: string) => {
@@ -60,6 +70,10 @@ export const MessageList = ({
   onLoadOlder,
   hasMoreMessages,
   onRetryMessage,
+  reactionsById,
+  onToggleReaction,
+  onReply,
+  seenBy,
 }: MessageListProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useListRef(null);
@@ -217,6 +231,30 @@ export const MessageList = ({
   }, [grouped]);
 
   // TASK 2.2: Only virtualize if we have more than 50 messages
+  const bubbleExtras = (msg: ChatMessage) => ({
+    replyTo: msg.replyTo ?? null,
+    image: msg.attachment ? <AttachmentImage id={msg.attachment.id} mime={msg.attachment.mime} /> : undefined,
+    reactions: msg.id ? reactionsById?.[msg.id] : undefined,
+    onReact: msg.id && onToggleReaction ? (emoji: string) => onToggleReaction(msg.id!, emoji) : undefined,
+    onReply: msg.id && onReply ? () => onReply(msg) : undefined,
+    seenBy: seenBy && msg.id === seenBy.messageId ? seenBy.label : undefined,
+  });
+
+  // react-window needs a height per row. Messages vary (quotes, images, reactions, long text), so estimate.
+  const estimateRowHeight = (index: number) => {
+    const item = virtualItems[index];
+    if (!item || item.type === "header") return 48;
+    const m = item.message;
+    if (m.system) return 44;
+    const lines = Math.max(1, Math.ceil((m.message?.length ?? 0) / 48)) + (m.message?.split("\n").length ?? 1) - 1;
+    let h = 76 + (lines - 1) * 24;
+    if (m.replyTo) h += 52;
+    if (m.attachment) h += 270;
+    if (m.id && reactionsById?.[m.id]?.length) h += 32;
+    if (seenBy && m.id === seenBy.messageId) h += 16;
+    return h;
+  };
+
   const shouldVirtualize = messages.length > 50;
 
   // TASK 2.2: Scroll to bottom when new messages arrive (after virtualItems is defined)
@@ -280,6 +318,7 @@ export const MessageList = ({
           authorName={msg.sender}
           actualSender={actualName}
           timestamp={createdAt}
+          {...bubbleExtras(msg)}
         >
           <span>{msg.message}</span>
           {msg.status === "sending" ? (
@@ -322,7 +361,7 @@ export const MessageList = ({
             listRef={listRef}
             defaultHeight={containerHeight}
             rowCount={virtualItems.length}
-            rowHeight={80} // Approximate height per item (header: ~40px, message: ~80px)
+            rowHeight={estimateRowHeight}
             rowComponent={renderVirtualItem}
             rowProps={{}}
             style={{ padding: '16px', height: containerHeight }}
@@ -426,6 +465,7 @@ export const MessageList = ({
                             authorName={msg.sender}
                             actualSender={actualName}
                             timestamp={createdAt}
+                            {...bubbleExtras(msg)}
                           >
                             <span>{msg.message}</span>
                             {msg.status === "sending" ? (

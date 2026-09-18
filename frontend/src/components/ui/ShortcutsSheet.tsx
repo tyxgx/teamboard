@@ -6,6 +6,7 @@ const mod = isMac ? "⌘" : "Ctrl";
 
 const rows: [string, string][] = [
   [`${mod} K`, "Open command palette"],
+  ["/", "Search messages in this board"],
   ["?", "Show this sheet"],
   ["Enter", "Send message"],
   ["Shift Enter", "New line in message"],

@@ -1,6 +1,8 @@
 import { toast } from "sonner";
 import { CommandPalette, type PaletteCommand } from "./components/ui/CommandPalette";
 import { ShortcutsSheet } from "./components/ui/ShortcutsSheet";
+import { SearchDialog } from "./components/chat/SearchDialog";
+import type { ReactionSummary } from "./components/chat/ReactionBar";
 import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
@@ -157,6 +159,8 @@ const mapServerMessage = (
   createdAt: payload.createdAt ?? new Date().toISOString(),
   userId: payload.userId ?? undefined,
   senderId: payload.senderId ?? undefined,
+  replyTo: payload.replyTo ?? null,
+  attachment: payload.attachment ?? null,
 });
 
 const usePersistentState = <T,>(
@@ -206,6 +210,19 @@ export default function BoardRoomPage() {
   const [optimisticBoardName, setOptimisticBoardName] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [joinDialogOpen, setJoinDialogOpen] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<{ id: string; sender: string; snippet: string } | null>(null);
+  const [pendingAttachment, setPendingAttachment] = useState<{
+    id: string;
+    mime: string;
+    size: number;
+    name: string;
+    previewUrl: string;
+  } | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [reactionsById, setReactionsById] = useState<Record<string, ReactionSummary[]>>({});
+  const reactionsLoadedRef = useRef<Set<string>>(new Set());
+  const [reads, setReads] = useState<Record<string, string>>({});
+  const [searchOpen, setSearchOpen] = useState(false);
   const [typingNames, setTypingNames] = useState<string[]>([]);
   const typingTimersRef = useRef<Map<string, number>>(new Map());
   const lastTypingEmitRef = useRef(0);
@@ -1663,7 +1680,7 @@ export default function BoardRoomPage() {
   const handleSendMessage = useCallback(async () => {
     if (!user || !boardDetails || !boardDetails.id || !boardDetails.code) return;
     const trimmed = composerValue.trim();
-    if (!trimmed) return;
+    if (!trimmed && !pendingAttachment) return;
     // Members can send admin-only messages - no restriction needed
     const effectiveVisibility = visibility;
 
@@ -1745,9 +1762,19 @@ export default function BoardRoomPage() {
         senderId: user.id,
         userId: user.id,
         status: "sending",
+        parentId: replyingTo?.id ?? null,
+        replyTo: replyingTo,
+        attachment: pendingAttachment
+          ? { id: pendingAttachment.id, mime: pendingAttachment.mime, size: pendingAttachment.size }
+          : null,
       };
 
+      const outgoingParentId = replyingTo?.id;
+      const outgoingAttachmentId = pendingAttachment?.id;
       setComposerValue("");
+      setReplyingTo(null);
+      if (pendingAttachment) URL.revokeObjectURL(pendingAttachment.previewUrl);
+      setPendingAttachment(null);
       pendingMessagesRef.current.add(clientMessageId);
       setMessages((prev) => [...prev, optimistic]);
       updateLastReceived(boardDetails.code, createdAt);
@@ -1773,6 +1800,8 @@ export default function BoardRoomPage() {
             boardId: boardDetails.id,
             anonymous: anonymousMode,
             clientMessageId,
+            parentId: outgoingParentId,
+            attachmentId: outgoingAttachmentId,
           },
           headers
         );
@@ -1809,6 +1838,8 @@ export default function BoardRoomPage() {
     getAuthHeaders,
     handleAuthFailure,
     isAdmin,
+    pendingAttachment,
+    replyingTo,
     updateBoardSummary,
     updateLastReceived,
     user,
@@ -1892,6 +1923,184 @@ export default function BoardRoomPage() {
     },
     [boardDetails?.id, getAuthHeaders, handleAuthFailure, messages]
   );
+
+  // ---- Reactions -------------------------------------------------------------------------------
+  const authHeaders = useCallback(() => {
+    const token = localStorage.getItem("token");
+    return token ? { Authorization: `Bearer ${token}` } : undefined;
+  }, []);
+
+  useEffect(() => {
+    reactionsLoadedRef.current = new Set();
+    setReactionsById({});
+    setReplyingTo(null);
+    setReads({});
+  }, [boardDetails?.id]);
+
+  useEffect(() => {
+    const boardId = boardDetails?.id;
+    const headers = authHeaders();
+    if (!boardId || !headers) return;
+    const missing = messages
+      .map((m) => m.id)
+      .filter((id): id is string => Boolean(id) && !reactionsLoadedRef.current.has(id as string))
+      .slice(-200);
+    if (missing.length === 0) return;
+    missing.forEach((id) => reactionsLoadedRef.current.add(id));
+    axios
+      .get(`${BACKEND}/api/boards/${boardId}/reactions`, { params: { ids: missing.join(",") }, headers })
+      .then((res) => setReactionsById((prev) => ({ ...prev, ...res.data.reactions })))
+      .catch(() => missing.forEach((id) => reactionsLoadedRef.current.delete(id)));
+  }, [messages, boardDetails?.id, authHeaders]);
+
+  useEffect(() => {
+    const code = boardDetails?.code;
+    if (!code) return;
+    const onUpdate = (p: { boardCode: string; commentId: string; counts: { emoji: string; count: number }[] }) => {
+      if (p.boardCode !== code) return;
+      setReactionsById((prev) => {
+        const mine = new Set((prev[p.commentId] ?? []).filter((r) => r.mine).map((r) => r.emoji));
+        return {
+          ...prev,
+          [p.commentId]: p.counts.map((c) => ({ emoji: c.emoji, count: c.count, mine: mine.has(c.emoji) })),
+        };
+      });
+    };
+    socketClient.on("reaction:update", onUpdate);
+    return () => {
+      socketClient.off("reaction:update", onUpdate);
+    };
+  }, [boardDetails?.code]);
+
+  const handleToggleReaction = useCallback(
+    async (messageId: string, emoji: string) => {
+      const headers = authHeaders();
+      if (!headers) return;
+      const before = reactionsById[messageId] ?? [];
+      // Optimistic flip; the server's answer replaces it either way.
+      setReactionsById((prev) => {
+        const list = prev[messageId] ?? [];
+        const existing = list.find((r) => r.emoji === emoji);
+        let next: ReactionSummary[];
+        if (!existing) next = [...list, { emoji, count: 1, mine: true }];
+        else if (existing.mine) next = list.map((r) => (r.emoji === emoji ? { ...r, count: r.count - 1, mine: false } : r)).filter((r) => r.count > 0);
+        else next = list.map((r) => (r.emoji === emoji ? { ...r, count: r.count + 1, mine: true } : r));
+        return { ...prev, [messageId]: next };
+      });
+      try {
+        const res = await axios.post(`${BACKEND}/api/messages/${messageId}/reactions`, { emoji }, { headers });
+        setReactionsById((prev) => ({ ...prev, [messageId]: res.data.reactions }));
+      } catch {
+        setReactionsById((prev) => ({ ...prev, [messageId]: before }));
+        toast.error("Couldn't add that reaction.");
+      }
+    },
+    [authHeaders, reactionsById]
+  );
+
+  // ---- Replies + images ----------------------------------------------------------------------------
+  const handleReplyTo = useCallback((message: ChatMessage) => {
+    if (!message.id) return;
+    setReplyingTo({
+      id: message.id,
+      sender: message.sender,
+      snippet: message.message.trim().slice(0, 120) || "📷 Photo",
+    });
+  }, []);
+
+  const handleClearAttachment = useCallback(() => {
+    setPendingAttachment((prev) => {
+      if (prev) URL.revokeObjectURL(prev.previewUrl);
+      return null;
+    });
+  }, []);
+
+  const handlePickImage = useCallback(
+    async (file: File) => {
+      const headers = authHeaders();
+      if (!boardDetails?.id || !headers) return;
+      if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) {
+        toast.error("Only PNG, JPEG, WebP or GIF images can be shared.");
+        return;
+      }
+      if (file.size > 2 * 1024 * 1024) {
+        toast.error("That image is over 2 MB. Pick a smaller one.");
+        return;
+      }
+      setUploadingImage(true);
+      try {
+        const res = await axios.post(`${BACKEND}/api/boards/${boardDetails.id}/attachments`, file, {
+          headers: { ...headers, "Content-Type": file.type },
+        });
+        setPendingAttachment((prev) => {
+          if (prev) URL.revokeObjectURL(prev.previewUrl);
+          return { ...res.data, name: file.name, previewUrl: URL.createObjectURL(file) };
+        });
+      } catch (error: any) {
+        toast.error(error?.response?.data?.message ?? "Upload failed. Try again.");
+      } finally {
+        setUploadingImage(false);
+      }
+    },
+    [authHeaders, boardDetails?.id]
+  );
+
+  // ---- Read receipts -------------------------------------------------------------------------------
+  useEffect(() => {
+    const boardId = boardDetails?.id;
+    const headers = authHeaders();
+    if (!boardId || !headers || readOnly) return;
+    let cancelled = false;
+    axios
+      .get(`${BACKEND}/api/boards/${boardId}/reads`, { headers })
+      .then((res) => {
+        if (cancelled) return;
+        const next: Record<string, string> = {};
+        for (const r of res.data.reads as { userId: string; lastReadAt: string }[]) next[r.userId] = r.lastReadAt;
+        setReads(next);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [boardDetails?.id, authHeaders, readOnly]);
+
+  useEffect(() => {
+    const boardId = boardDetails?.id;
+    const headers = authHeaders();
+    if (!boardId || !headers || readOnly || messages.length === 0) return;
+    const timer = window.setTimeout(() => {
+      if (document.visibilityState === "visible") {
+        axios.put(`${BACKEND}/api/boards/${boardId}/read`, undefined, { headers }).catch(() => undefined);
+      }
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [messages.length, boardDetails?.id, authHeaders, readOnly]);
+
+  useEffect(() => {
+    const code = boardDetails?.code;
+    if (!code) return;
+    const onRead = (p: { boardCode: string; userId: string; at: string }) => {
+      if (p.boardCode === code && p.userId !== user?.id) setReads((prev) => ({ ...prev, [p.userId]: p.at }));
+    };
+    socketClient.on("read:update", onRead);
+    return () => {
+      socketClient.off("read:update", onRead);
+    };
+  }, [boardDetails?.code, user?.id]);
+
+  const seenBy = useMemo(() => {
+    if (!user) return null;
+    const own = [...messages].reverse().find((m) => m.id && m.status !== "sending" && m.status !== "failed" && (m.userId === user.id || m.senderId === user.id));
+    if (!own?.id || !own.createdAt) return null;
+    const sentAt = new Date(own.createdAt).getTime();
+    const names = (boardDetails?.members ?? [])
+      .filter((m) => m.userId !== user.id && reads[m.userId] && new Date(reads[m.userId]).getTime() >= sentAt)
+      .map((m) => m.user.name.split(" ")[0]);
+    if (names.length === 0) return null;
+    const label = names.length <= 2 ? `Seen by ${names.join(", ")}` : `Seen by ${names[0]} +${names.length - 1}`;
+    return { messageId: own.id, label };
+  }, [messages, reads, boardDetails?.members, user]);
 
   const handleRetryComments = useCallback(async () => {
     if (!boardDetails?.id || !boardDetails.code) return;
@@ -2459,6 +2668,9 @@ export default function BoardRoomPage() {
       if (e.key === "?" && !typing) {
         e.preventDefault();
         setShortcutsOpen(true);
+      } else if (e.key === "/" && !typing) {
+        e.preventDefault();
+        setSearchOpen(true);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -2474,6 +2686,7 @@ export default function BoardRoomPage() {
         section: "Boards" as const,
         run: () => handleSelectBoard(b.code),
       })),
+      ...(boardDetails ? [{ id: "search", label: "Search messages in this board", hint: "/", section: "Actions" as const, run: () => setSearchOpen(true) }] : []),
       { id: "create", label: "Create board", section: "Actions" as const, run: () => setCreateDialogOpen(true) },
       { id: "join", label: "Join board with code", section: "Actions" as const, run: () => setJoinDialogOpen(true) },
       { id: "shortcuts", label: "Keyboard shortcuts", hint: "?", section: "Actions" as const, run: () => setShortcutsOpen(true) },
@@ -2535,6 +2748,10 @@ export default function BoardRoomPage() {
                 hasMoreMessages={hasMoreMessages}
                 onRetryMessage={handleRetryMessage}
                 typingIndicator={typingNames}
+                reactionsById={reactionsById}
+                onToggleReaction={handleToggleReaction}
+                onReply={readOnly ? undefined : handleReplyTo}
+                seenBy={seenBy}
               />
             )}
 
@@ -2563,6 +2780,12 @@ export default function BoardRoomPage() {
               readOnly={readOnly}
               disabled={!user || readOnly}
               readOnlyMessage={readOnlyBanner}
+              replyingTo={replyingTo}
+              onCancelReply={() => setReplyingTo(null)}
+              attachment={pendingAttachment}
+              uploading={uploadingImage}
+              onPickImage={handlePickImage}
+              onClearAttachment={handleClearAttachment}
             />
           </>
         ) : (
@@ -2600,6 +2823,7 @@ export default function BoardRoomPage() {
       </main>
 
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={paletteCommands} />
+      <SearchDialog open={searchOpen} boardId={boardDetails?.id} boardName={boardDetails?.name} onClose={() => setSearchOpen(false)} />
       <ShortcutsSheet open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
 
       <RightPanel

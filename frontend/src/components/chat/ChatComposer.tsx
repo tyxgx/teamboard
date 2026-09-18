@@ -14,6 +14,12 @@ type ChatComposerProps = {
   disabled?: boolean;
   readOnly?: boolean;
   readOnlyMessage?: string;
+  replyingTo?: { sender: string; snippet: string } | null;
+  onCancelReply?: () => void;
+  attachment?: { name: string; previewUrl: string } | null;
+  uploading?: boolean;
+  onPickImage?: (file: File) => void;
+  onClearAttachment?: () => void;
 };
 
 export const ChatComposer = ({
@@ -28,12 +34,20 @@ export const ChatComposer = ({
   disabled = false,
   readOnly = false,
   readOnlyMessage,
+  replyingTo,
+  onCancelReply,
+  attachment,
+  uploading = false,
+  onPickImage,
+  onClearAttachment,
 }: ChatComposerProps) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const canSend = Boolean(value.trim() || attachment) && !uploading;
 
   const trySendMessage = () => {
     if (disabled || readOnly) return;
-    if (!value.trim()) return;
+    if (!canSend) return;
     onSend();
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -53,6 +67,9 @@ export const ChatComposer = ({
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       trySendMessage();
+    } else if (event.key === "Escape" && replyingTo) {
+      event.stopPropagation();
+      onCancelReply?.();
     }
   };
 
@@ -81,6 +98,30 @@ export const ChatComposer = ({
       {readOnly && readOnlyMessage ? (
         <div className="mx-auto mb-3 max-w-3xl rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-medium text-amber-700">
           {readOnlyMessage}
+        </div>
+      ) : null}
+
+      {replyingTo ? (
+        <div className="mx-auto mb-2 flex max-w-3xl items-start justify-between gap-3 rounded-xl border-l-2 border-emerald-500 bg-slate-100 px-3 py-2 text-xs text-slate-600">
+          <div className="min-w-0">
+            <span className="font-semibold">Replying to {replyingTo.sender || "message"}</span>
+            <p className="line-clamp-1 wrap-anywhere">{replyingTo.snippet}</p>
+          </div>
+          <button type="button" onClick={onCancelReply} aria-label="Cancel reply" className="shrink-0 rounded-md px-1.5 text-base leading-none text-slate-500 hover:bg-slate-200">×</button>
+        </div>
+      ) : null}
+
+      {attachment || uploading ? (
+        <div className="mx-auto mb-2 flex max-w-3xl items-center gap-3 rounded-xl bg-slate-100 px-3 py-2 text-xs text-slate-600">
+          {attachment ? (
+            <img src={attachment.previewUrl} alt="" className="h-12 w-12 rounded-lg object-cover" />
+          ) : (
+            <div className="h-12 w-12 animate-pulse rounded-lg bg-slate-200" />
+          )}
+          <span className="min-w-0 flex-1 truncate">{uploading ? "Uploading…" : attachment?.name}</span>
+          {attachment ? (
+            <button type="button" onClick={onClearAttachment} aria-label="Remove image" className="rounded-md px-1.5 text-base leading-none text-slate-500 hover:bg-slate-200">×</button>
+          ) : null}
         </div>
       ) : null}
 
@@ -115,6 +156,32 @@ export const ChatComposer = ({
               🛡️
             </button>
           ) : null}
+
+          {onPickImage ? (
+            <>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onPickImage(file);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                disabled={disabled || readOnly || uploading}
+                className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-lg text-slate-600 transition hover:bg-slate-200 active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
+                aria-label="Attach an image"
+                title="Attach an image (max 2 MB)"
+              >
+                📎
+              </button>
+            </>
+          ) : null}
         </div>
 
         <textarea
@@ -130,7 +197,7 @@ export const ChatComposer = ({
 
         <button
           type="submit"
-          disabled={disabled || readOnly || !value.trim()}
+          disabled={disabled || readOnly || !canSend}
           className="flex h-11 items-center justify-center rounded-xl bg-emerald-500 px-4 text-sm font-semibold text-white shadow-[0_6px_16px_-6px_rgba(16,185,129,0.6)] transition hover:bg-emerald-600 active:scale-95 disabled:cursor-not-allowed disabled:bg-emerald-300 disabled:shadow-none lg:self-end"
           aria-label="Send message"
         >

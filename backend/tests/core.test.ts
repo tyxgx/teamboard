@@ -2,9 +2,16 @@
 // Also covers the same auth-required checks the old core.test.ts had, but against real routes
 // (POST /api/boards, POST /api/comments) instead of a password-based signup/login flow that
 // no longer exists (see CODE_REVIEW.md C3).
+import http from 'http';
 import request from 'supertest';
 import app from '../src/index';
+import { setupSocket } from '../src/sockets/socket';
 import { loginAsNewUser } from './helpers/auth';
+
+// With RTM_ENABLED=true (as in prod) comment creation broadcasts over Socket.io, so init it like server.ts does.
+beforeAll(() => {
+  setupSocket(http.createServer());
+});
 
 describe('📋 Board lifecycle', () => {
   it('creates a board, joins it by invite code, and lists it for both members', async () => {

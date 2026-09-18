@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../db/client';
 import { getIO } from '../sockets/socket';
+import { canViewComment } from './access';
 
 async function getMembership(userId: string, boardId: string) {
   return prisma.boardMembership.findUnique({
@@ -31,7 +32,9 @@ const rtmEnabledFlag = () => process.env.RTM_ENABLED === 'true';
 function broadcastNewComment(params: {
   io: ReturnType<typeof getIO>;
   boardCode: string;
-  comment: CommentWithAuthor;
+  // The legacy (non-realtime) path doesn't load replies/attachments, so those are optional here.
+  comment: Omit<CommentWithAuthor, 'parent' | 'attachment'> &
+    Partial<Pick<CommentWithAuthor, 'parent' | 'attachment'>>;
   boardActivity: {
     lastActivity: Date;
     lastCommentPreview: string | null;
@@ -68,6 +71,8 @@ function broadcastNewComment(params: {
     createdAt: comment.createdAt.toISOString(),
     senderId,
     clientMessageId,
+    replyTo: replyToPreview(comment.parent),
+    attachment: comment.attachment ?? null,
   };
 
   const targetRoom = isAdminOnly ? `${boardCode}:admin` : boardCode;
@@ -191,20 +196,44 @@ async function legacyCreateComment(req: Request, res: Response) {
   }
 }
 
-type CommentWithAuthor = Prisma.CommentGetPayload<{
-  include: {
-    createdBy: {
-      select: {
-        id: true;
-        name: true;
-      };
-    };
+const commentInclude = {
+  createdBy: { select: { id: true, name: true } },
+  parent: {
+    select: {
+      id: true,
+      content: true,
+      anonymous: true,
+      visibility: true,
+      createdById: true,
+      createdBy: { select: { name: true } },
+    },
+  },
+  attachment: { select: { id: true, mime: true, size: true } },
+} satisfies Prisma.CommentInclude;
+
+type CommentWithAuthor = Prisma.CommentGetPayload<{ include: typeof commentInclude }>;
+
+/** Short quote of the replied-to message; the real name behind an anonymous parent is never included. */
+function replyToPreview(
+  parent: CommentWithAuthor['parent'] | undefined,
+  viewer?: { id: string; admin: boolean }
+) {
+  if (!parent) return null;
+  if (viewer && !canViewComment(parent, viewer.id, viewer.admin)) {
+    return { id: parent.id, sender: '', snippet: 'Original message unavailable' };
+  }
+  const revealed = viewer ? !parent.anonymous || viewer.admin || parent.createdById === viewer.id : !parent.anonymous;
+  return {
+    id: parent.id,
+    sender: revealed ? parent.createdBy.name : 'Anonymous',
+    snippet: parent.content.trim().slice(0, 120) || '📷 Photo',
   };
-}>;
+}
 
 async function realtimeCreateComment(req: Request, res: Response) {
   const startTime = Date.now();
-  const { content, visibility, boardId, anonymous = false, clientMessageId } = req.body;
+  const { content, visibility: requestedVisibility, boardId, anonymous = false, clientMessageId, parentId, attachmentId } = req.body;
+  let visibility: 'EVERYONE' | 'ADMIN_ONLY' = requestedVisibility;
   const clientId =
     typeof clientMessageId === 'string' && clientMessageId.trim().length > 0
       ? clientMessageId.trim()
@@ -253,19 +282,41 @@ async function realtimeCreateComment(req: Request, res: Response) {
     // Allow members to create admin-only messages (they can send messages only admins will see)
     // Anonymous mode is always available - no need to check board.anonymousEnabled
 
+    let parentIdToUse: string | undefined;
+    if (parentId) {
+      const parent = await prisma.comment.findUnique({
+        where: { id: parentId },
+        select: { id: true, boardId: true, visibility: true, createdById: true },
+      });
+      // Same "not found" for missing, other-board and hidden parents so admin-only messages can't be probed.
+      if (!parent || parent.boardId !== boardId || !canViewComment(parent, req.user.id, isAdmin)) {
+        res.status(404).json({ message: 'The message you are replying to was not found' });
+        return;
+      }
+      // A reply to an admin-only message can never be more public than its parent.
+      if (parent.visibility === 'ADMIN_ONLY') visibility = 'ADMIN_ONLY';
+      parentIdToUse = parent.id;
+    }
+
+    let attachmentToUse: string | undefined;
+    if (attachmentId) {
+      const att = await prisma.attachment.findFirst({
+        where: { id: attachmentId, boardId, uploaderId: req.user.id, commentId: null },
+        select: { id: true },
+      });
+      if (!att) {
+        res.status(400).json({ message: 'Attachment not found or already used' });
+        return;
+      }
+      attachmentToUse = att.id;
+    }
+
     let comment: CommentWithAuthor | null = null;
     if (clientId) {
       const duplicateCheckStart = Date.now();
       comment = await prisma.comment.findFirst({
         where: { boardId, clientId },
-        include: {
-          createdBy: {
-            select: {
-              id: true,
-              name: true,
-            },
-          },
-        },
+        include: commentInclude,
       });
       const duplicateCheckTime = Date.now() - duplicateCheckStart;
       if (duplicateCheckTime > 100) {
@@ -285,21 +336,25 @@ async function realtimeCreateComment(req: Request, res: Response) {
             boardId,
             anonymous,
             clientId,
+            parentId: parentIdToUse,
           },
-          include: {
-            createdBy: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
+          include: commentInclude,
         });
         const createTime = Date.now() - createStart;
         if (createTime > 200) {
           console.warn(`[perf] Comment create took ${createTime}ms`);
         }
         createdNew = true;
+        if (attachmentToUse) {
+          await prisma.attachment.update({
+            where: { id: attachmentToUse },
+            data: { commentId: comment.id },
+          });
+          comment = await prisma.comment.findUniqueOrThrow({
+            where: { id: comment.id },
+            include: commentInclude,
+          });
+        }
       } catch (error) {
         if (
           clientId &&
@@ -308,14 +363,7 @@ async function realtimeCreateComment(req: Request, res: Response) {
         ) {
           comment = await prisma.comment.findFirst({
             where: { boardId, clientId },
-            include: {
-              createdBy: {
-                select: {
-                  id: true,
-                  name: true,
-                },
-              },
-            },
+            include: commentInclude,
           });
         } else {
           throw error;
@@ -332,7 +380,7 @@ async function realtimeCreateComment(req: Request, res: Response) {
     const room = board.code;
 
     if (createdNew) {
-      const previewSource = content.trim().length > 0 ? content.trim() : content;
+      const previewSource = content.trim().length > 0 ? content.trim() : '📷 Photo';
       const preview = previewSource.slice(0, 140);
 
       const boardUpdateStart = Date.now();
@@ -426,6 +474,7 @@ async function realtimeCreateComment(req: Request, res: Response) {
       clientId: clientId ?? null,
       clientMessageId: clientId ?? null,
       createdAt: comment.createdAt,
+      replyTo: replyToPreview(comment.parent, { id: req.user.id, admin: isAdmin }),
     });
   } catch (error) {
     const totalTime = Date.now() - startTime;
@@ -615,9 +664,7 @@ async function respondWithRealtimeComments(req: Request, res: Response, ctx: Boa
 
   const comments = await prisma.comment.findMany({
     where,
-    include: {
-      createdBy: { select: { id: true, name: true } },
-    },
+    include: commentInclude,
     orderBy,
     take: limit,
     skip: beforeDate || cursorDate ? 0 : offset,
@@ -642,6 +689,8 @@ async function respondWithRealtimeComments(req: Request, res: Response, ctx: Boa
       userId: c.createdById,
       senderId: c.createdById,
       clientMessageId: c.clientId ?? null,
+      replyTo: replyToPreview(c.parent, { id: req.user.id, admin: ctx.admin }),
+      attachment: c.attachment,
     };
   });
 

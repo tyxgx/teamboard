@@ -10,6 +10,8 @@ export type OutgoingMessage = {
   boardId: string;
   anonymous: boolean;
   clientMessageId: string;
+  parentId?: string;
+  attachmentId?: string;
 };
 
 type Headers = Readonly<Record<string, string>>;

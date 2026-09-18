@@ -1,4 +1,5 @@
 import React, { type ReactNode } from "react";
+import { MessageActions, ReactionBar, type ReactionSummary } from "./ReactionBar";
 
 type MessageBubbleProps = {
   isOwn: boolean;
@@ -8,6 +9,12 @@ type MessageBubbleProps = {
   actualSender?: string;
   timestamp?: string;
   children: ReactNode;
+  replyTo?: { id: string; sender: string; snippet: string } | null;
+  image?: ReactNode;
+  reactions?: ReactionSummary[];
+  onReact?: (emoji: string) => void;
+  onReply?: () => void;
+  seenBy?: string;
 };
 
 const formatTime = (timestamp?: string) => {
@@ -25,6 +32,12 @@ export const MessageBubble = React.memo(({
   actualSender,
   timestamp,
   children,
+  replyTo,
+  image,
+  reactions,
+  onReact,
+  onReply,
+  seenBy,
 }: MessageBubbleProps) => {
   const timeLabel = formatTime(timestamp);
   const alignment = isOwn ? "justify-end" : "justify-start";
@@ -36,7 +49,7 @@ export const MessageBubble = React.memo(({
   return (
     <div className={`flex w-full gap-2 px-4 ${alignment} animate-[fadeIn_0.2s_ease-in]`}>
       <div
-        className={`max-w-[80%] rounded-2xl px-4 py-2.5 md:max-w-[75%] ${bubbleColor} ${
+        className={`group/msg relative max-w-[80%] rounded-2xl px-4 py-2.5 md:max-w-[75%] ${bubbleColor} ${
           isOwn ? "rounded-br-md" : "rounded-bl-md"
         }`}
         data-visibility={audience === "ADMIN_ONLY" ? "admin" : "everyone"}
@@ -73,11 +86,28 @@ export const MessageBubble = React.memo(({
           </div>
         )}
 
+        {onReact && onReply ? <MessageActions isOwn={isOwn} onReact={onReact} onReply={onReply} /> : null}
+
+        {replyTo ? (
+          <div
+            className={`mb-2 rounded-lg border-l-2 px-2.5 py-1.5 text-xs ${
+              isOwn ? "border-white/70 bg-white/15 text-emerald-50" : "border-emerald-500 bg-slate-100 text-slate-600"
+            }`}
+          >
+            {replyTo.sender ? <span className="font-semibold">{replyTo.sender}</span> : null}
+            <p className="line-clamp-2 wrap-anywhere">{replyTo.snippet}</p>
+          </div>
+        ) : null}
+
+        {image}
+
         <div className={`wrap-anywhere text-base leading-6 whitespace-pre-wrap ${
           isOwn ? "text-white" : "text-slate-900"
         }`}>
           {children}
         </div>
+
+        {reactions && onReact ? <ReactionBar reactions={reactions} onToggle={onReact} isOwn={isOwn} /> : null}
 
         {(timeLabel || isOwn) && (
           <div className={`mt-1.5 flex items-center gap-1.5 ${
@@ -89,6 +119,7 @@ export const MessageBubble = React.memo(({
             )}
           </div>
         )}
+        {seenBy ? <p className="mt-0.5 text-right text-[10px] text-emerald-50/80">{seenBy}</p> : null}
       </div>
     </div>
   );
