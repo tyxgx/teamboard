@@ -160,7 +160,7 @@ export const ChatComposer = ({
         event.preventDefault();
         trySendMessage();
       }}
-      className="shrink-0 border-t border-slate-200/80 bg-white px-3 pb-4 pt-3 md:px-4"
+      className="shrink-0 border-t border-slate-200/80 bg-white px-3 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 md:px-4"
     >
       {readOnly && readOnlyMessage ? (
         <div className="mx-auto mb-3 max-w-3xl rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs font-medium text-amber-700">
@@ -199,8 +199,8 @@ export const ChatComposer = ({
         </div>
       ) : null}
 
-      <div className="mx-auto flex max-w-3xl flex-col gap-3 rounded-3xl border border-slate-200/70 bg-white p-3 shadow-[0_10px_30px_rgba(15,23,42,0.08)] transition-shadow focus-within:shadow-[0_10px_30px_rgba(16,185,129,0.14)] md:flex-row md:flex-wrap md:items-end lg:flex-nowrap">
-        <div className="flex shrink-0 items-center gap-1.5">
+      <div className="mx-auto flex max-w-3xl flex-wrap items-end gap-2 rounded-3xl border border-slate-200/70 bg-white p-2.5 shadow-[0_10px_30px_rgba(15,23,42,0.08)] transition-shadow focus-within:shadow-[0_10px_30px_rgba(16,185,129,0.14)] md:flex-nowrap md:gap-3 md:p-3">
+        <div className="order-2 flex w-full shrink-0 items-center gap-1.5 md:order-1 md:w-auto">
           <button
             type="button"
             onClick={toggleAnonymous}
@@ -258,7 +258,7 @@ export const ChatComposer = ({
           ) : null}
         </div>
 
-        <div className="relative flex min-w-0 flex-1">
+        <div className="relative order-1 flex min-w-0 flex-1 md:order-2">
         {suggestions.length > 0 ? (
           <ul
             role="listbox"
@@ -303,7 +303,7 @@ export const ChatComposer = ({
         <button
           type="submit"
           disabled={disabled || readOnly || !canSend}
-          className="flex h-11 items-center justify-center rounded-xl bg-emerald-500 px-4 text-sm font-semibold text-white shadow-[0_6px_16px_-6px_rgba(16,185,129,0.6)] transition hover:bg-emerald-600 active:scale-95 disabled:cursor-not-allowed disabled:bg-emerald-300 disabled:shadow-none lg:self-end"
+          className="order-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-500 text-sm md:order-3 md:w-auto md:px-4 font-semibold text-white shadow-[0_6px_16px_-6px_rgba(16,185,129,0.6)] transition hover:bg-emerald-600 active:scale-95 disabled:cursor-not-allowed disabled:bg-emerald-300 disabled:shadow-none lg:self-end"
           aria-label="Send message"
         >
           ➤

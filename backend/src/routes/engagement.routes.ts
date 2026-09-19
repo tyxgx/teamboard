@@ -7,6 +7,7 @@ import {
   searchMessages,
   toggleReaction,
 } from '../controllers/engagement.controller';
+import { deleteAvatar, getAvatar, MAX_AVATAR_BYTES, uploadAvatar } from '../controllers/avatar.controller';
 import { rateLimit } from '../middlewares/rateLimit';
 import { deleteMessage, editMessage } from '../controllers/messageActions.controller';
 import {
@@ -39,10 +40,21 @@ router.post(
 );
 router.get('/attachments/:id', authenticate, getAttachment);
 
+const avatarLimiter = rateLimit({ windowMs: 60_000, max: 10, name: 'avatar' });
+router.put(
+  '/user/avatar',
+  authenticate,
+  avatarLimiter,
+  express.raw({ type: ['image/png', 'image/jpeg', 'image/webp'], limit: MAX_AVATAR_BYTES }),
+  uploadAvatar
+);
+router.delete('/user/avatar', authenticate, avatarLimiter, deleteAvatar);
+router.get('/users/:id/avatar', authenticate, getAvatar);
+
 // express.raw rejects oversized bodies with an error object; answer 413 instead of a generic 500.
 router.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (err?.type === 'entity.too.large') {
-    res.status(413).json({ message: 'Image is too large (2 MB max)' });
+    res.status(413).json({ message: 'Image is too large' });
     return;
   }
   next(err);

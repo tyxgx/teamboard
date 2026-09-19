@@ -158,7 +158,7 @@ test.describe("TeamBoard, two people in one board", () => {
   });
 
   test("image upload shows the image to the other person", async () => {
-    await alice.locator('input[type="file"]').setInputFiles({ name: "dot.png", mimeType: "image/png", buffer: PNG });
+    await alice.locator('input[type="file"][accept*="gif"]').setInputFiles({ name: "dot.png", mimeType: "image/png", buffer: PNG });
     await expect(alice.getByText("dot.png")).toBeVisible();
     await alice.getByRole("button", { name: "Send message" }).click();
     await expect(mo.getByAltText("Shared image").last()).toBeVisible({ timeout: 10_000 });
@@ -198,6 +198,16 @@ test.describe("TeamBoard, two people in one board", () => {
     await box.press("Escape");
     await expect(alice.getByRole("option")).toHaveCount(0);
     await expect(box).toHaveValue("hi @Mo");
+  });
+
+  test("uploading a profile photo shows it in the member list, for board-mates too", async () => {
+    const photoInput = alice.locator('input[type="file"][accept="image/png,image/jpeg,image/webp"]').first();
+    await photoInput.setInputFiles({ name: "me.png", mimeType: "image/png", buffer: PNG });
+    await expect(alice.getByText("Photo updated")).toBeVisible();
+    await expect(alice.locator("aside img").first()).toBeVisible();
+    await mo.reload(); // avatars are fetched once per session
+    await expect(mo.getByPlaceholder("Type a message")).toBeEnabled();
+    await expect(mo.locator("aside img").first()).toBeVisible();
   });
 
   test("command palette opens with Ctrl+K and closes with Escape; theme toggle flips the dark class", async () => {

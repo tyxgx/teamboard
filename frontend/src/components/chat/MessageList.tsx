@@ -342,8 +342,6 @@ export const MessageList = ({
               <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>
               sending
             </span>
-          ) : msg.status === "sent" ? (
-            <span className="ml-2 inline-flex items-center text-[11px] opacity-70">✓</span>
           ) : null}
           {msg.status === "failed" ? (
             <button
@@ -431,7 +429,16 @@ export const MessageList = ({
                 ))}
               </>
             ) : grouped.length === 0 ? (
-              <div className="py-20 text-center text-sm text-slate-400">No messages yet. Start the conversation!</div>
+              <div className="mx-auto max-w-sm px-6 py-14 text-center">
+                <span className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-2xl bg-emerald-500/10 text-xl text-emerald-600">💬</span>
+                <p className="text-base font-semibold text-slate-800">This board is quiet. Say something.</p>
+                <ul className="mt-4 space-y-2 text-left text-sm text-slate-500">
+                  <li><span aria-hidden>🕶️</span> Turn on anonymous to post without your name.</li>
+                  <li><span aria-hidden>🛡️</span> Members can send admin-only notes that only admins see.</li>
+                  <li><span aria-hidden>@</span> Type @ to mention someone.</li>
+                  <li><span aria-hidden>⌨️</span> Press <kbd className="rounded border border-slate-200 px-1 font-mono text-xs">?</kbd> for shortcuts.</li>
+                </ul>
+              </div>
             ) : (
               grouped.map(([label, bucket]) => (
                 <Fragment key={label || bucket[0]?.id || Math.random().toString()}>
@@ -489,8 +496,6 @@ export const MessageList = ({
                                 <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>
                                 sending
                               </span>
-                            ) : msg.status === "sent" ? (
-                              <span className="ml-2 inline-flex items-center text-[11px] opacity-70">✓</span>
                             ) : null}
                             {msg.status === "failed" ? (
                               <button

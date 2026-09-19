@@ -358,3 +358,36 @@ describe('mentions', () => {
     expect(list.body.comments.find((c: any) => c.id === res.body.id).mentions).toEqual([member.user.id]);
   });
 });
+
+describe('avatars', () => {
+  const put = (u: TestUser, body: Buffer, type = 'image/png') =>
+    request(app).put('/api/user/avatar').set(auth(u)).set('Content-Type', type).send(body);
+  const get = (u: TestUser, id: string) => request(app).get(`/api/users/${id}/avatar`).set(auth(u));
+
+  it('uploads, is visible to board-mates, and can be removed', async () => {
+    const { admin, member } = await setup();
+    expect((await get(admin, member.user.id)).statusCode).toBe(404); // none yet
+    expect((await put(member, PNG)).statusCode).toBe(204);
+    const seen = await get(admin, member.user.id);
+    expect(seen.statusCode).toBe(200);
+    expect(seen.headers['content-type']).toContain('image/png');
+    expect((await request(app).delete('/api/user/avatar').set(auth(member))).statusCode).toBe(204);
+    expect((await get(admin, member.user.id)).statusCode).toBe(404);
+  });
+
+  it('is hidden from people who share no board with you', async () => {
+    const { member, outsider } = await setup();
+    await put(member, PNG);
+    expect((await get(outsider, member.user.id)).statusCode).toBe(404);
+    expect((await get(member, member.user.id)).statusCode).toBe(200); // your own is always visible to you
+  });
+
+  it('rejects non-images, GIFs and oversized files', async () => {
+    const { member } = await setup();
+    expect((await put(member, Buffer.from('<svg/>'))).statusCode).toBe(415);
+    const gif = Buffer.concat([Buffer.from('GIF89a'), Buffer.alloc(40, 1)]);
+    expect((await put(member, gif, 'image/png')).statusCode).toBe(415);
+    const big = Buffer.concat([PNG, Buffer.alloc(300 * 1024, 3)]);
+    expect((await put(member, big)).statusCode).toBe(413);
+  });
+});

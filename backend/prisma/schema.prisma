@@ -13,6 +13,9 @@ model User {
   name             String
   email            String            @unique
   image            String? // Optional profile picture
+  // Uploaded avatar (small image stored in Postgres, see avatar.controller.ts); overrides `image` when set
+  avatarMime       String?
+  avatarData       Bytes?
   googleId         String? // Optional Google ID
   role             String            @default("MEMBER")
   comments         Comment[]

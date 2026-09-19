@@ -2,6 +2,7 @@ import { toast } from "sonner";
 import { CommandPalette, type PaletteCommand } from "./components/ui/CommandPalette";
 import { ShortcutsSheet } from "./components/ui/ShortcutsSheet";
 import { SearchDialog } from "./components/chat/SearchDialog";
+import { invalidateAvatar } from "./components/ui/Avatar";
 import { useReactions } from "./hooks/useReactions";
 import { useReadReceipts } from "./hooks/useReadReceipts";
 import { useTypingIndicator } from "./hooks/useTypingIndicator";
@@ -1939,6 +1940,33 @@ export default function BoardRoomPage() {
     return token ? { Authorization: `Bearer ${token}` } : undefined;
   }, []);
 
+  // Photos are resized in the browser (256px, JPEG) so any camera picture fits the 256 KB server cap.
+  const handleUploadAvatar = useCallback(
+    async (file: File) => {
+      const headers = authHeaders();
+      if (!headers || !user) return;
+      if (!file.type.startsWith("image/")) {
+        toast.error("Pick an image file.");
+        return;
+      }
+      try {
+        const bitmap = await createImageBitmap(file);
+        const side = Math.min(bitmap.width, bitmap.height);
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 256;
+        canvas.getContext("2d")!.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, 256, 256);
+        const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+        if (!blob) throw new Error("encode failed");
+        await axios.put(`${BACKEND}/api/user/avatar`, blob, { headers: { ...headers, "Content-Type": "image/jpeg" } });
+        invalidateAvatar(user.id);
+        toast.success("Photo updated");
+      } catch (error: any) {
+        toast.error(error?.response?.data?.message ?? "Couldn't update your photo.");
+      }
+    },
+    [authHeaders, user]
+  );
+
   // ---- Edit / delete ------------------------------------------------------------------------------
   const handleEditMessage = useCallback((message: ChatMessage) => {
     if (!message.id) return;
@@ -2670,7 +2698,7 @@ export default function BoardRoomPage() {
   );
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-100">
+    <div className="flex h-dvh overflow-hidden bg-slate-100">
       {isInitialLoad && user ? (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white">
           <div className="w-full max-w-md px-6">
@@ -2822,6 +2850,8 @@ export default function BoardRoomPage() {
         isReadOnly={readOnly}
         onCopyInvite={handleCopyInvite}
         isVisible={Boolean(boardDetails)}
+        currentUserId={user?.id}
+        onUploadAvatar={handleUploadAvatar}
       />
 
       {isSidebarOpen ? (
@@ -2848,6 +2878,8 @@ export default function BoardRoomPage() {
               isVisible
               variant="mobile"
               onClose={() => setRightPanelOpen(false)}
+              currentUserId={user?.id}
+              onUploadAvatar={handleUploadAvatar}
             />
           </div>
         </div>
