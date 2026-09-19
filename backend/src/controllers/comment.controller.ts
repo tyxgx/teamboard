@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db/client';
 import { getIO } from '../sockets/socket';
 import { canViewComment } from './access';
+import { resolveMentions } from './mentions';
 
 async function getMembership(userId: string, boardId: string) {
   return prisma.boardMembership.findUnique({
@@ -33,8 +34,8 @@ function broadcastNewComment(params: {
   io: ReturnType<typeof getIO>;
   boardCode: string;
   // The legacy (non-realtime) path doesn't load replies/attachments, so those are optional here.
-  comment: Omit<CommentWithAuthor, 'parent' | 'attachment'> &
-    Partial<Pick<CommentWithAuthor, 'parent' | 'attachment'>>;
+  comment: Omit<CommentWithAuthor, 'parent' | 'attachment' | 'mentions'> &
+    Partial<Pick<CommentWithAuthor, 'parent' | 'attachment' | 'mentions'>>;
   boardActivity: {
     lastActivity: Date;
     lastCommentPreview: string | null;
@@ -73,6 +74,7 @@ function broadcastNewComment(params: {
     clientMessageId,
     replyTo: replyToPreview(comment.parent),
     attachment: comment.attachment ?? null,
+    mentions: comment.mentions ?? [],
   };
 
   const targetRoom = isAdminOnly ? `${boardCode}:admin` : boardCode;
@@ -311,6 +313,14 @@ async function realtimeCreateComment(req: Request, res: Response) {
       attachmentToUse = att.id;
     }
 
+    const mentions = await resolveMentions({
+      boardId,
+      boardCreatedBy: board.createdBy,
+      content,
+      authorId: req.user.id,
+      visibility,
+    });
+
     let comment: CommentWithAuthor | null = null;
     if (clientId) {
       const duplicateCheckStart = Date.now();
@@ -337,6 +347,7 @@ async function realtimeCreateComment(req: Request, res: Response) {
             anonymous,
             clientId,
             parentId: parentIdToUse,
+            mentions,
           },
           include: commentInclude,
         });
@@ -690,6 +701,7 @@ async function respondWithRealtimeComments(req: Request, res: Response, ctx: Boa
       senderId: c.createdById,
       clientMessageId: c.clientId ?? null,
       editedAt: c.editedAt,
+      mentions: c.mentions,
       replyTo: replyToPreview(c.parent, { id: req.user.id, admin: ctx.admin }),
       attachment: c.attachment,
     };

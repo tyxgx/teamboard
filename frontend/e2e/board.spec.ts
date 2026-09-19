@@ -175,6 +175,31 @@ test.describe("TeamBoard, two people in one board", () => {
     await expect(alice.getByText(/Seen by Mo/)).toBeVisible({ timeout: 10_000 });
   });
 
+  test("typing @ suggests members; picking one inserts the name and highlights it for the other person", async () => {
+    const box = alice.getByPlaceholder("Type a message");
+    await box.click();
+    await box.pressSequentially("hello @Mo");
+    const option = alice.getByRole("option", { name: /Mo Member/ });
+    await expect(option).toBeVisible();
+    await box.press("Enter"); // accepts the suggestion instead of sending
+    await expect(box).toHaveValue("hello @Mo Member ");
+    await box.pressSequentially(uniq("check this"));
+    await box.press("Enter");
+    const bubble = messageBubble(mo, "check this");
+    await expect(bubble).toBeVisible();
+    await expect(bubble.getByText("@Mo Member")).toBeVisible();
+  });
+
+  test("Escape dismisses the mention list without sending", async () => {
+    const box = alice.getByPlaceholder("Type a message");
+    await box.click();
+    await box.pressSequentially("hi @Mo");
+    await expect(alice.getByRole("option", { name: /Mo Member/ })).toBeVisible();
+    await box.press("Escape");
+    await expect(alice.getByRole("option")).toHaveCount(0);
+    await expect(box).toHaveValue("hi @Mo");
+  });
+
   test("command palette opens with Ctrl+K and closes with Escape; theme toggle flips the dark class", async () => {
     await mo.keyboard.press("Control+k");
     await expect(mo.getByRole("dialog", { name: "Command palette" })).toBeVisible();

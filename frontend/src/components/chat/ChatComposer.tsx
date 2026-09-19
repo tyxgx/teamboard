@@ -1,4 +1,4 @@
-import { useRef, type ChangeEvent, type KeyboardEvent } from "react";
+import { useMemo, useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
 
 type Visibility = "EVERYONE" | "ADMIN_ONLY";
 
@@ -23,6 +23,8 @@ type ChatComposerProps = {
   editing?: boolean;
   onCancelEdit?: () => void;
   onEditLast?: () => void;
+  /** People who can be @-mentioned (active members of the board) */
+  mentionables?: { id: string; name: string }[];
 };
 
 export const ChatComposer = ({
@@ -46,10 +48,40 @@ export const ChatComposer = ({
   editing = false,
   onCancelEdit,
   onEditLast,
+  mentionables = [],
 }: ChatComposerProps) => {
+  const [caret, setCaret] = useState(0);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionDismissed, setMentionDismissed] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const canSend = Boolean(value.trim() || attachment) && !uploading;
+
+  // "@par" right before the caret opens the suggestion list
+  const mentionQuery = useMemo(() => {
+    const before = value.slice(0, caret);
+    const m = /(^|\s)@([^@\n]{0,30})$/.exec(before);
+    return m ? { query: m[2], start: before.length - m[2].length - 1 } : null;
+  }, [value, caret]);
+  const suggestions = useMemo(() => {
+    if (!mentionQuery || mentionDismissed) return [];
+    const q = mentionQuery.query.toLowerCase();
+    return mentionables.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 6);
+  }, [mentionQuery, mentionables, mentionDismissed]);
+
+  const insertMention = (name: string) => {
+    if (!mentionQuery) return;
+    const after = value.slice(caret);
+    const next = `${value.slice(0, mentionQuery.start)}@${name} ${after}`;
+    onChange(next);
+    setMentionIndex(0);
+    const pos = mentionQuery.start + name.length + 2;
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(pos, pos);
+      setCaret(pos);
+    });
+  };
 
   const trySendMessage = () => {
     if (disabled || readOnly) return;
@@ -62,6 +94,8 @@ export const ChatComposer = ({
 
   const handleInput = (event: ChangeEvent<HTMLTextAreaElement>) => {
     onChange(event.target.value);
+    setCaret(event.target.selectionStart ?? event.target.value.length);
+    setMentionDismissed(false);
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
       textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
@@ -70,6 +104,29 @@ export const ChatComposer = ({
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.nativeEvent?.isComposing) return;
+    if (suggestions.length > 0) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setMentionIndex((i) => (i + 1) % suggestions.length);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setMentionIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        insertMention(suggestions[Math.min(mentionIndex, suggestions.length - 1)].name);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setMentionDismissed(true);
+        return;
+      }
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       trySendMessage();
@@ -201,8 +258,38 @@ export const ChatComposer = ({
           ) : null}
         </div>
 
+        <div className="relative flex min-w-0 flex-1">
+        {suggestions.length > 0 ? (
+          <ul
+            role="listbox"
+            aria-label="Mention someone"
+            className="absolute bottom-full left-0 z-20 mb-2 w-64 overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-xl"
+          >
+            {suggestions.map((p, i) => (
+              <li key={p.id} role="option" aria-selected={i === mentionIndex}>
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    insertMention(p.name);
+                  }}
+                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-sm ${
+                    i === mentionIndex ? "bg-emerald-500/10 text-emerald-700" : "text-slate-700"
+                  }`}
+                >
+                  <span className="grid h-6 w-6 place-items-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-600">
+                    {p.name.slice(0, 2).toUpperCase()}
+                  </span>
+                  <span className="truncate">{p.name}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
         <textarea
           ref={textareaRef}
+          onKeyUp={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+          onClick={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
           value={value}
           onChange={handleInput}
           onKeyDown={handleKeyDown}
@@ -211,6 +298,7 @@ export const ChatComposer = ({
           disabled={disabled || readOnly}
           className="wrap-anywhere min-h-[40px] max-h-[140px] w-full flex-1 resize-none overflow-hidden rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-700 placeholder:text-slate-400 transition-colors focus:border-emerald-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-200 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 md:min-w-[200px]"
         />
+        </div>
 
         <button
           type="submit"

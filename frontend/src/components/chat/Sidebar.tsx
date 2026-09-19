@@ -25,6 +25,7 @@ type SidebarProps = {
   boards: SidebarBoard[];
   activeCode?: string | null;
   unreadByBoard: Record<string, number>;
+  mentionsByBoard?: Record<string, number>;
   onSelectBoard: (code: string) => void;
   onTogglePin: (code: string) => void;
   onHideBoard: (board: { id: string; code: string; name: string }) => void;
@@ -71,6 +72,7 @@ export const Sidebar = React.memo(({
   boards,
   activeCode,
   unreadByBoard,
+  mentionsByBoard = {},
   onSelectBoard,
   onTogglePin,
   onHideBoard,
@@ -359,6 +361,15 @@ export const Sidebar = React.memo(({
                     <div className="flex shrink-0 flex-col items-end gap-1">
                       {timeLabel ? (
                         <span className="text-[11px] tabular-nums text-slate-500">{timeLabel}</span>
+                      ) : null}
+                      {(mentionsByBoard[board.code] ?? 0) > 0 ? (
+                        <span
+                          className="grid h-5 min-w-[20px] place-items-center rounded-full bg-amber-400 px-1.5 text-[11px] font-bold text-slate-900"
+                          title="Someone mentioned you"
+                          aria-label="You were mentioned"
+                        >
+                          @
+                        </span>
                       ) : null}
                       {unread > 0 ? (
                         <span className="grid h-5 min-w-[20px] place-items-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-semibold tabular-nums text-white">

@@ -324,3 +324,37 @@ describe('rate limiting', () => {
     expect((await post(admin, { content: 'still fine', visibility: 'EVERYONE', boardId })).statusCode).toBe(201);
   });
 });
+
+describe('mentions', () => {
+  it('records @mentions of board members, ignores the author and near-miss names', async () => {
+    const { admin, member, boardId } = await setup();
+    const res = await post(admin, { content: 'hey @Mo Member and @Alice Admin, also @Mo', visibility: 'EVERYONE', boardId });
+    expect(res.statusCode).toBe(201);
+    expect(res.body.mentions).toEqual([member.user.id]); // not the author, and "@Mo" alone is not "@Mo Member"
+  });
+
+  it('is case-insensitive and requires a word boundary', async () => {
+    const { admin, member, boardId } = await setup();
+    const a = await post(admin, { content: 'ping @mo member!', visibility: 'EVERYONE', boardId });
+    expect(a.body.mentions).toEqual([member.user.id]);
+    const b = await post(admin, { content: 'ping @Mo Members', visibility: 'EVERYONE', boardId });
+    expect(b.body.mentions).toEqual([]);
+  });
+
+  it('does not notify a member who cannot see an admin-only message', async () => {
+    const { admin, member, boardId } = await setup();
+    const res = await post(admin, { content: 'secret for @Mo Member', visibility: 'ADMIN_ONLY', boardId });
+    expect(res.body.mentions).toEqual([]);
+    const own = await post(member, { content: 'to admin: hi @Alice Admin', visibility: 'ADMIN_ONLY', boardId });
+    expect(own.body.mentions).toEqual([admin.user.id]);
+  });
+
+  it('is recomputed when the message is edited', async () => {
+    const { admin, member, boardId, code } = await setup();
+    const res = await post(admin, { content: 'hello', visibility: 'EVERYONE', boardId });
+    const edit = await request(app).patch(`/api/messages/${res.body.id}`).set(auth(admin)).send({ content: 'hello @Mo Member' });
+    expect(edit.body.mentions).toEqual([member.user.id]);
+    const list = await request(app).get(`/api/comments/by-code/${code}`).set(auth(member));
+    expect(list.body.comments.find((c: any) => c.id === res.body.id).mentions).toEqual([member.user.id]);
+  });
+});

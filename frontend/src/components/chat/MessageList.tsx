@@ -3,6 +3,7 @@ import { List, useListRef } from "react-window";
 import type { RowComponentProps } from "react-window";
 import { MessageBubble } from "./MessageBubble";
 import { AttachmentImage } from "./AttachmentImage";
+import { MessageText } from "./MessageText";
 import type { ReactionSummary } from "./ReactionBar";
 
 export type ChatMessage = {
@@ -20,6 +21,7 @@ export type ChatMessage = {
   status?: "sending" | "sent" | "failed";
   parentId?: string | null;
   editedAt?: string | null;
+  mentions?: string[];
   replyTo?: { id: string; sender: string; snippet: string } | null;
   attachment?: { id: string; mime: string; size: number } | null;
 };
@@ -38,6 +40,7 @@ type MessageListProps = {
   reactionsById?: Record<string, ReactionSummary[]>;
   onToggleReaction?: (messageId: string, emoji: string) => void;
   onReply?: (message: ChatMessage) => void;
+  mentionNames?: string[];
   onEditMessage?: (message: ChatMessage) => void;
   onDeleteMessage?: (message: ChatMessage) => void;
   /** "Seen by …" label shown under the caller's most recent message */
@@ -76,6 +79,7 @@ export const MessageList = ({
   reactionsById,
   onToggleReaction,
   onReply,
+  mentionNames = [],
   onEditMessage,
   onDeleteMessage,
   seenBy,
@@ -332,7 +336,7 @@ export const MessageList = ({
           timestamp={createdAt}
           {...bubbleExtras(msg)}
         >
-          <span>{msg.message}</span>
+          <span><MessageText text={msg.message} mentionNames={mentionNames} selfName={currentUserName} isOwn={isOwn} /></span>
           {msg.status === "sending" ? (
             <span className="ml-2 inline-flex items-center text-[11px] opacity-60">
               <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>
@@ -479,7 +483,7 @@ export const MessageList = ({
                             timestamp={createdAt}
                             {...bubbleExtras(msg)}
                           >
-                            <span>{msg.message}</span>
+                            <span><MessageText text={msg.message} mentionNames={mentionNames} selfName={currentUserName} isOwn={isOwn} /></span>
                             {msg.status === "sending" ? (
                               <span className="ml-2 inline-flex items-center text-[11px] opacity-60">
                                 <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>

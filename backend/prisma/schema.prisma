@@ -80,6 +80,8 @@ model Comment {
   parentId    String?
   // Set when the author edits the message after sending
   editedAt    DateTime?
+  // User ids @-mentioned in the text, limited to people who are allowed to see the message
+  mentions    String[]  @default([])
 
   createdBy User  @relation(fields: [createdById], references: [id])
   board     Board @relation(fields: [boardId], references: [id])

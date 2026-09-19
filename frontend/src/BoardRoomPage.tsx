@@ -22,6 +22,7 @@ import { boardsCache, boardDetailsCache, messagesCache, unreadCountsCache } from
 const BACKEND = import.meta.env.VITE_BACKEND_URL;
 const HIDDEN_STORAGE_KEY = "tb.hiddenBoards";
 const UNREAD_STORAGE_KEY = "tb.unreadByBoard";
+const MENTIONS_STORAGE_KEY = "tb.mentionsByBoard";
 const LAST_BOARD_KEY = "tb.lastBoardCode";
 const REDIRECT_KEY = "tb.redirect";
 
@@ -162,6 +163,7 @@ const mapServerMessage = (
   userId: payload.userId ?? undefined,
   senderId: payload.senderId ?? undefined,
   editedAt: payload.editedAt ?? null,
+  mentions: payload.mentions ?? [],
   replyTo: payload.replyTo ?? null,
   attachment: payload.attachment ?? null,
 });
@@ -236,6 +238,8 @@ export default function BoardRoomPage() {
 
   const [hiddenBoardIds, setHiddenBoardIds] = usePersistentState<string[]>(HIDDEN_STORAGE_KEY, []);
   const [unreadByBoard, setUnreadByBoard] = usePersistentState<Record<string, number>>(UNREAD_STORAGE_KEY, {});
+  // Boards where someone @-mentioned you while you weren't looking at them
+  const [mentionsByBoard, setMentionsByBoard] = usePersistentState<Record<string, number>>(MENTIONS_STORAGE_KEY, {});
 
   const pendingMessagesRef = useRef<Set<string>>(new Set());
   const activeRoomRef = useRef<string | null>(null);
@@ -1142,6 +1146,10 @@ export default function BoardRoomPage() {
           return;
         }
         applyUnread(targetSnapshot.code, (count) => count + 1);
+        if (user && normalized.mentions?.includes(user.id)) {
+          const mentionedCode = targetSnapshot.code;
+          setMentionsByBoard((prev) => ({ ...prev, [mentionedCode]: (prev[mentionedCode] ?? 0) + 1 }));
+        }
       }
       updateLastReceived(targetCode, normalized.createdAt);
     };
@@ -1863,6 +1871,22 @@ export default function BoardRoomPage() {
   ]);
 
 
+  useEffect(() => {
+    const code = boardDetails?.code;
+    if (!code) return;
+    setMentionsByBoard((prev) => {
+      if (!prev[code]) return prev;
+      const next = { ...prev };
+      delete next[code];
+      return next;
+    });
+  }, [boardDetails?.code, setMentionsByBoard]);
+
+  const totalMentions = useMemo(() => Object.values(mentionsByBoard).reduce((a, b) => a + b, 0), [mentionsByBoard]);
+  useEffect(() => {
+    document.title = totalMentions > 0 ? `(${totalMentions}) @ TeamBoard` : "TeamBoard";
+  }, [totalMentions]);
+
   const { typingNames, notifyTyping } = useTypingIndicator(boardDetails?.code, anonymousMode);
 
   const handleComposerChange = useCallback(
@@ -1953,9 +1977,11 @@ export default function BoardRoomPage() {
   useEffect(() => {
     const code = boardDetails?.code;
     if (!code) return;
-    const onEdited = (p: { boardCode: string; id: string; message: string; editedAt: string | null }) => {
+    const onEdited = (p: { boardCode: string; id: string; message: string; editedAt: string | null; mentions?: string[] }) => {
       if (p.boardCode !== code) return;
-      setMessages((prev) => prev.map((m) => (m.id === p.id ? { ...m, message: p.message, editedAt: p.editedAt } : m)));
+      setMessages((prev) =>
+        prev.map((m) => (m.id === p.id ? { ...m, message: p.message, editedAt: p.editedAt, mentions: p.mentions ?? m.mentions } : m))
+      );
     };
     const onDeleted = (p: { boardCode: string; id: string }) => {
       if (p.boardCode !== code) return;
@@ -2039,6 +2065,16 @@ export default function BoardRoomPage() {
     readOnly,
     authHeaders,
   });
+
+  const mentionables = useMemo(
+    () =>
+      (boardDetails?.members ?? [])
+        .filter((m) => m.userId !== user?.id)
+        .map((m) => ({ id: m.userId, name: m.user.name })),
+    [boardDetails?.members, user?.id]
+  );
+  // Highlighting covers everyone (including you, so mentions of you stand out); suggestions exclude you.
+  const mentionNames = useMemo(() => (boardDetails?.members ?? []).map((m) => m.user.name), [boardDetails?.members]);
 
   const handleRetryComments = useCallback(async () => {
     if (!boardDetails?.id || !boardDetails.code) return;
@@ -2588,6 +2624,7 @@ export default function BoardRoomPage() {
     onJoinBoard: () => setJoinDialogOpen(true),
     onLogout: handleLogout,
     unreadByBoard,
+    mentionsByBoard,
     showFooterActions: Boolean(boardDetails?.code),
     onPrefetchBoard: prefetchBoard,
     onBulkLeaveBoards: handleBulkLeaveBoards,
@@ -2689,6 +2726,7 @@ export default function BoardRoomPage() {
                 reactionsById={reactionsById}
                 onToggleReaction={handleToggleReaction}
                 onReply={readOnly ? undefined : handleReplyTo}
+                mentionNames={mentionNames}
                 onEditMessage={readOnly ? undefined : handleEditMessage}
                 onDeleteMessage={readOnly ? undefined : (m) => m.id && setDeleteTarget({ id: m.id })}
                 seenBy={seenBy}
@@ -2726,6 +2764,7 @@ export default function BoardRoomPage() {
               uploading={uploadingImage}
               onPickImage={handlePickImage}
               onClearAttachment={handleClearAttachment}
+              mentionables={mentionables}
               editing={Boolean(editing)}
               onCancelEdit={handleCancelEdit}
               onEditLast={readOnly ? undefined : handleEditLast}

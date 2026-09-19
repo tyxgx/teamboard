@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { prisma } from '../db/client';
 import { getIO } from '../sockets/socket';
 import { canViewComment, getBoardAccess } from './access';
+import { resolveMentions } from './mentions';
 
 /**
  * The board list shows a preview of the latest message. If that exact message was edited or
@@ -96,10 +97,17 @@ export const editMessage = async (req: Request, res: Response) => {
       res.status(400).json({ message: 'Message cannot be empty' });
       return;
     }
+    const mentions = await resolveMentions({
+      boardId: comment.boardId,
+      boardCreatedBy: access.board.createdBy,
+      content,
+      authorId: req.user.id,
+      visibility: comment.visibility,
+    });
     const updated = await prisma.comment.update({
       where: { id: commentId },
-      data: { content, editedAt: new Date() },
-      select: { id: true, content: true, editedAt: true },
+      data: { content, editedAt: new Date(), mentions },
+      select: { id: true, content: true, editedAt: true, mentions: true },
     });
     await refreshBoardPreviewIfLatest(comment.boardId, access.board.code, comment.createdAt);
     try {
@@ -110,11 +118,12 @@ export const editMessage = async (req: Request, res: Response) => {
           id: updated.id,
           message: updated.content,
           editedAt: updated.editedAt?.toISOString() ?? null,
+          mentions: updated.mentions,
         });
     } catch (socketError) {
       console.warn('Socket not ready for message:edited', socketError);
     }
-    res.json({ id: updated.id, message: updated.content, editedAt: updated.editedAt });
+    res.json({ id: updated.id, message: updated.content, editedAt: updated.editedAt, mentions: updated.mentions });
   } catch (error) {
     console.error('editMessage failed', error);
     res.status(500).json({ message: 'Unable to edit message' });
