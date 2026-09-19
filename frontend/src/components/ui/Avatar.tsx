@@ -7,8 +7,11 @@ const BACKEND = import.meta.env.VITE_BACKEND_URL as string;
 // member list shares one fetch per user instead of refetching on each render.
 const cache = new Map<string, string | null>();
 const listeners = new Set<() => void>();
+// People whose photo we know exists (e.g. you just uploaded yours) even if the board payload predates it
+const known = new Set<string>();
 
 export const invalidateAvatar = (userId: string) => {
+  known.add(userId);
   const url = cache.get(userId);
   if (url) URL.revokeObjectURL(url);
   cache.delete(userId);
@@ -16,7 +19,18 @@ export const invalidateAvatar = (userId: string) => {
 };
 
 /** Uploaded photo if the person has one, otherwise their initials. */
-export const Avatar = ({ userId, name, className = "" }: { userId: string; name: string; className?: string }) => {
+/** `hasAvatar` comes with the member list, so people without a photo cost zero requests. */
+export const Avatar = ({
+  userId,
+  name,
+  hasAvatar,
+  className = "",
+}: {
+  userId: string;
+  name: string;
+  hasAvatar?: boolean;
+  className?: string;
+}) => {
   const [, force] = useState(0);
   const cached = cache.get(userId);
 
@@ -30,6 +44,7 @@ export const Avatar = ({ userId, name, className = "" }: { userId: string; name:
 
   useEffect(() => {
     if (cache.has(userId)) return;
+    if (!hasAvatar && !known.has(userId)) return;
     let alive = true;
     const token = localStorage.getItem("token");
     axios
@@ -48,7 +63,7 @@ export const Avatar = ({ userId, name, className = "" }: { userId: string; name:
     return () => {
       alive = false;
     };
-  }, [userId, cached]);
+  }, [userId, cached, hasAvatar]);
 
   return cached ? (
     <img src={cached} alt="" className={`shrink-0 object-cover ${className}`} />

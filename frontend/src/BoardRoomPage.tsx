@@ -2,6 +2,7 @@ import { toast } from "sonner";
 import { CommandPalette, type PaletteCommand } from "./components/ui/CommandPalette";
 import { ShortcutsSheet } from "./components/ui/ShortcutsSheet";
 import { SearchDialog } from "./components/chat/SearchDialog";
+import { getShared } from "./api/inflight";
 import { invalidateAvatar } from "./components/ui/Avatar";
 import { useReactions } from "./hooks/useReactions";
 import { useReadReceipts } from "./hooks/useReadReceipts";
@@ -521,8 +522,8 @@ export default function BoardRoomPage() {
           const fetchFresh = async () => {
             try {
               const [boardResponse, commentsData] = await Promise.all([
-                axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers }),
-                axios.get(`${BACKEND}/api/comments/by-code/${code}?limit=50`, { headers })
+                getShared(`${BACKEND}/api/boards/by-code/${code}`, { headers }),
+                getShared(`${BACKEND}/api/comments/by-code/${code}?limit=50`, { headers })
               ]);
               const details = boardResponse.data as BoardDetails;
               const commentsResponseData = commentsData.data;
@@ -560,8 +561,8 @@ export default function BoardRoomPage() {
           const fetchFresh = async () => {
             try {
               const [boardResponse, commentsData] = await Promise.all([
-                axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers }),
-                axios.get(`${BACKEND}/api/comments/by-code/${code}?limit=50`, { headers })
+                getShared(`${BACKEND}/api/boards/by-code/${code}`, { headers }),
+                getShared(`${BACKEND}/api/comments/by-code/${code}?limit=50`, { headers })
               ]);
               const details = boardResponse.data as BoardDetails;
               const commentsResponseData = commentsData.data;
@@ -592,8 +593,8 @@ export default function BoardRoomPage() {
       try {
         // TASK 1.3: Fetch board details and comments in parallel using new by-code endpoint
         const [boardResponse, commentsData] = await Promise.all([
-          axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers }),
-          axios.get(`${BACKEND}/api/comments/by-code/${code}?limit=50`, { headers })
+          getShared(`${BACKEND}/api/boards/by-code/${code}`, { headers }),
+          getShared(`${BACKEND}/api/comments/by-code/${code}?limit=50`, { headers })
         ]);
         const details = boardResponse.data as BoardDetails;
         const commentsResponseData = commentsData.data;
@@ -806,8 +807,8 @@ export default function BoardRoomPage() {
             try {
               // TASK 1.3: Use parallel fetch for preloading too
               const [boardResponse, commentsData] = await Promise.all([
-                axios.get(`${BACKEND}/api/boards/by-code/${board.code}`, { headers }),
-                axios.get(`${BACKEND}/api/comments/by-code/${board.code}?limit=50`, { headers })
+                getShared(`${BACKEND}/api/boards/by-code/${board.code}`, { headers }),
+                getShared(`${BACKEND}/api/comments/by-code/${board.code}?limit=50`, { headers })
               ]);
               const details = boardResponse.data as BoardDetails;
               const commentsResponseData = commentsData.data;
@@ -2478,7 +2479,7 @@ export default function BoardRoomPage() {
       if (boardDetails?.code === code) return;
       
       try {
-        const boardResponse = await axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers });
+        const boardResponse = await getShared(`${BACKEND}/api/boards/by-code/${code}`, { headers });
         const details = boardResponse.data as BoardDetails;
         // TASK 1.2: Reduced limit from 100 to 50 for faster first load
         const commentsData = await axios.get(`${BACKEND}/api/comments/${details.id}?limit=50`, { headers });
@@ -2650,15 +2651,27 @@ export default function BoardRoomPage() {
     ? "You left this board; history is read-only."
     : undefined;
 
+  // Stable identities so the memoized Sidebar / MessageList don't redraw on every composer keystroke.
+  const normalizedMessages = useMemo(() => messages.map((msg) => normalizeMessage(msg)), [messages]);
+  const handleRequestDelete = useCallback((m: ChatMessage) => {
+    if (m.id) setDeleteTarget({ id: m.id });
+  }, []);
+  const handleRequestLeave = useCallback(
+    (board: { id: string; code: string; name: string }) => setModal({ type: "leave", board }),
+    []
+  );
+  const handleOpenCreate = useCallback(() => setCreateDialogOpen(true), []);
+  const handleOpenJoin = useCallback(() => setJoinDialogOpen(true), []);
+
   const sidebarCommonProps = {
     boards: sidebarBoards,
     activeCode: boardDetails?.code ?? null,
     onSelectBoard: handleSelectBoard,
     onTogglePin: handleTogglePin,
     onHideBoard: handleHideBoard,
-    onLeaveBoard: (board: { id: string; code: string; name: string }) => setModal({ type: "leave", board }),
-    onCreateBoard: () => setCreateDialogOpen(true),
-    onJoinBoard: () => setJoinDialogOpen(true),
+    onLeaveBoard: handleRequestLeave,
+    onCreateBoard: handleOpenCreate,
+    onJoinBoard: handleOpenJoin,
     onLogout: handleLogout,
     unreadByBoard,
     mentionsByBoard,
@@ -2750,7 +2763,7 @@ export default function BoardRoomPage() {
             ) : (
               <MessageList
                 key={boardDetails.code}
-                messages={messages.map((msg) => normalizeMessage(msg))}
+                messages={normalizedMessages}
                 isAdmin={isAdmin}
                 currentUserId={user?.id}
                 currentUserName={user?.name}
@@ -2765,7 +2778,7 @@ export default function BoardRoomPage() {
                 onReply={readOnly ? undefined : handleReplyTo}
                 mentionNames={mentionNames}
                 onEditMessage={readOnly ? undefined : handleEditMessage}
-                onDeleteMessage={readOnly ? undefined : (m) => m.id && setDeleteTarget({ id: m.id })}
+                onDeleteMessage={readOnly ? undefined : handleRequestDelete}
                 seenBy={seenBy}
               />
             )}

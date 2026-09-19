@@ -96,8 +96,18 @@ export const getReactions = async (req: Request, res: Response) => {
       res.json({ reactions: {} });
       return;
     }
+    // Two indexed lookups instead of one reaction query with a relation filter: the join form made
+    // Postgres scan the whole board's comments (~190 ms on a 3000-message board vs single-digit ms).
+    const visible = await prisma.comment.findMany({
+      where: { id: { in: ids }, ...visibleCommentsWhere(req.user.id, access) },
+      select: { id: true },
+    });
+    if (visible.length === 0) {
+      res.json({ reactions: {} });
+      return;
+    }
     const rows = await prisma.reaction.findMany({
-      where: { commentId: { in: ids }, comment: visibleCommentsWhere(req.user.id, access) },
+      where: { commentId: { in: visible.map((c) => c.id) } },
       select: { commentId: true, emoji: true, userId: true },
     });
     const out: Record<string, { emoji: string; count: number; mine: boolean }[]> = {};

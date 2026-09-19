@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import { List, useListRef } from "react-window";
 import type { RowComponentProps } from "react-window";
 import { MessageBubble } from "./MessageBubble";
@@ -65,7 +65,7 @@ const humanizeDate = (timestamp?: string) => {
   return target.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 };
 
-export const MessageList = ({
+const MessageListInner = ({
   messages,
   isAdmin,
   currentUserId,
@@ -536,3 +536,6 @@ export const MessageList = ({
     </div>
   );
 };
+
+// Typing in the composer re-renders the page on every keystroke; the list only needs to redraw when its own props change.
+export const MessageList = memo(MessageListInner);

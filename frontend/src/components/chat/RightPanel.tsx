@@ -2,7 +2,7 @@ type Member = {
   id: string;
   userId: string;
   role: "ADMIN" | "MEMBER";
-  user: { id: string; name: string; email: string };
+  user: { id: string; name: string; email: string; avatarMime?: string | null };
 };
 
 import { useRef, useState } from "react";
@@ -116,7 +116,7 @@ export const RightPanel = ({
           ) : (
             board.members.map((member) => (
               <li key={member.userId} className="flex items-center gap-3 rounded-xl bg-white px-3 py-2 text-sm text-slate-700">
-                <Avatar userId={member.userId} name={member.user.name} className="h-7 w-7 rounded-[8px]" />
+                <Avatar userId={member.userId} name={member.user.name} hasAvatar={Boolean(member.user.avatarMime)} className="h-7 w-7 rounded-[8px]" />
                 <span className="min-w-0 flex-1 truncate font-medium">{member.user.name}</span>
                 {member.userId === currentUserId && onUploadAvatar ? (
                   <>
