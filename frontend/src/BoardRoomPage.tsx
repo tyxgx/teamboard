@@ -1061,6 +1061,15 @@ export default function BoardRoomPage() {
             return board;
           }
           found = true;
+          // The server's board-activity event for this exact message always arrives first and may
+          // since have been refreshed by an edit; don't let this later event put the old text back.
+          if (
+            board.lastCommentAt &&
+            normalized.createdAt &&
+            new Date(board.lastCommentAt).getTime() === new Date(normalized.createdAt).getTime()
+          ) {
+            return board;
+          }
           const updatedBoard: BoardSummary = {
             ...board,
             lastActivity: normalized.createdAt ?? board.lastActivity,
