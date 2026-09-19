@@ -2,7 +2,7 @@ name: Keep backend awake
 
 on:
   schedule:
-    # Every 10 minutes — Render's free tier sleeps after 15 min of inactivity
+    # Every 10 minutes — Render's free tier sleeps after 15 min of inactivity (and Supabase pauses after ~7 idle days)
     - cron: "*/10 * * * *"
   workflow_dispatch: {}
 
@@ -10,5 +10,6 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping backend health endpoint
-        run: curl -sS --max-time 30 https://teamboard-gees.onrender.com || true
+      - name: Ping backend + database health endpoint
+        # /health runs SELECT 1, which also keeps the free Supabase project from auto-pausing
+        run: curl -sS --max-time 60 https://teamboard-gees.onrender.com/health || true

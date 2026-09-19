@@ -18,6 +18,7 @@ import boardRoutes from './routes/board.routes'; // ✅ Only once
 import commentRoutes from './routes/comment.routes';
 import userRoutes from './routes/user.routes';
 import engagementRoutes from './routes/engagement.routes';
+import prisma from './db/client';
 
 const app = express();
 
@@ -35,6 +36,17 @@ app.use(express.json());
 // ✅ Health check
 app.get('/', (req: Request, res: Response) => {
   res.send('TeamBoard API is running');
+});
+
+// Health check that also touches the database. Supabase's free tier pauses a project after ~7 days
+// without activity, so the keep-alive workflow pings this route to keep the DB awake too.
+app.get('/health', async (req: Request, res: Response) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.set('Cache-Control', 'no-store').json({ status: 'ok', db: 'up' });
+  } catch {
+    res.status(503).set('Cache-Control', 'no-store').json({ status: 'error', db: 'down' });
+  }
 });
 
 // TASK 3.3: Enhanced HTTP caching for various endpoints
