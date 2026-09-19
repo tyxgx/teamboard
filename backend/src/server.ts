@@ -51,6 +51,20 @@ server.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
 
+// Uploaded-but-never-sent images are removed after an hour so abandoned uploads don't pile up in Postgres.
+const ORPHAN_MAX_AGE_MS = 60 * 60 * 1000;
+const orphanSweep = setInterval(async () => {
+  try {
+    const { count } = await prisma.attachment.deleteMany({
+      where: { commentId: null, createdAt: { lt: new Date(Date.now() - ORPHAN_MAX_AGE_MS) } },
+    });
+    if (count > 0) console.log(`🧹 Removed ${count} unsent image upload(s)`);
+  } catch (error) {
+    console.error('Orphan attachment sweep failed', error);
+  }
+}, 15 * 60 * 1000);
+orphanSweep.unref();
+
 // Keep process alive and handle graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, shutting down gracefully');

@@ -7,6 +7,7 @@ import {
   searchMessages,
   toggleReaction,
 } from '../controllers/engagement.controller';
+import { rateLimit } from '../middlewares/rateLimit';
 import { deleteMessage, editMessage } from '../controllers/messageActions.controller';
 import {
   ALLOWED_IMAGE_TYPES,
@@ -17,16 +18,22 @@ import {
 
 const router = express.Router();
 
-router.post('/messages/:commentId/reactions', authenticate, toggleReaction);
-router.patch('/messages/:commentId', authenticate, editMessage);
-router.delete('/messages/:commentId', authenticate, deleteMessage);
+const reactLimiter = rateLimit({ windowMs: 60_000, max: 90, name: 'reaction' });
+const editLimiter = rateLimit({ windowMs: 60_000, max: 40, name: 'edit' });
+const uploadLimiter = rateLimit({ windowMs: 60_000, max: 12, name: 'upload' });
+const searchLimiter = rateLimit({ windowMs: 60_000, max: 60, name: 'search' });
+
+router.post('/messages/:commentId/reactions', authenticate, reactLimiter, toggleReaction);
+router.patch('/messages/:commentId', authenticate, editLimiter, editMessage);
+router.delete('/messages/:commentId', authenticate, editLimiter, deleteMessage);
 router.get('/boards/:boardId/reactions', authenticate, getReactions);
 router.put('/boards/:boardId/read', authenticate, markRead);
 router.get('/boards/:boardId/reads', authenticate, getReads);
-router.get('/boards/:boardId/search', authenticate, searchMessages);
+router.get('/boards/:boardId/search', authenticate, searchLimiter, searchMessages);
 router.post(
   '/boards/:boardId/attachments',
   authenticate,
+  uploadLimiter,
   express.raw({ type: ALLOWED_IMAGE_TYPES, limit: MAX_ATTACHMENT_BYTES }),
   uploadAttachment
 );

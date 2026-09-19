@@ -309,3 +309,18 @@ describe('board preview after edit/delete', () => {
     expect(b.lastCommentPreview ?? null).toBeNull();
   });
 });
+
+describe('rate limiting', () => {
+  it('answers 429 with Retry-After once a user floods message sends, without affecting other users', async () => {
+    const { admin, member, boardId } = await setup();
+    let limited: any = null;
+    for (let i = 0; i < 45 && !limited; i++) {
+      const res = await post(member, { content: `spam ${i}`, visibility: 'EVERYONE', boardId });
+      if (res.statusCode === 429) limited = res;
+    }
+    expect(limited).not.toBeNull();
+    expect(Number(limited.headers['retry-after'])).toBeGreaterThan(0);
+    // A different user is unaffected
+    expect((await post(admin, { content: 'still fine', visibility: 'EVERYONE', boardId })).statusCode).toBe(201);
+  });
+});

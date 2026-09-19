@@ -2,7 +2,9 @@ import { toast } from "sonner";
 import { CommandPalette, type PaletteCommand } from "./components/ui/CommandPalette";
 import { ShortcutsSheet } from "./components/ui/ShortcutsSheet";
 import { SearchDialog } from "./components/chat/SearchDialog";
-import type { ReactionSummary } from "./components/chat/ReactionBar";
+import { useReactions } from "./hooks/useReactions";
+import { useReadReceipts } from "./hooks/useReadReceipts";
+import { useTypingIndicator } from "./hooks/useTypingIndicator";
 import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
@@ -220,15 +222,9 @@ export default function BoardRoomPage() {
     previewUrl: string;
   } | null>(null);
   const [uploadingImage, setUploadingImage] = useState(false);
-  const [reactionsById, setReactionsById] = useState<Record<string, ReactionSummary[]>>({});
-  const reactionsLoadedRef = useRef<Set<string>>(new Set());
-  const [reads, setReads] = useState<Record<string, string>>({});
   const [searchOpen, setSearchOpen] = useState(false);
   const [editing, setEditing] = useState<{ id: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string } | null>(null);
-  const [typingNames, setTypingNames] = useState<string[]>([]);
-  const typingTimersRef = useRef<Map<string, number>>(new Map());
-  const lastTypingEmitRef = useRef(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [createBoardError, setCreateBoardError] = useState<string | null>(null);
@@ -1867,44 +1863,14 @@ export default function BoardRoomPage() {
   ]);
 
 
-  // Typing indicators: entries expire on their own, so a dropped "stopped typing" can't stick forever.
-  useEffect(() => {
-    const code = boardDetails?.code;
-    const timers = typingTimersRef.current;
-    if (!code) return;
-    const onTyping = (payload: { boardCode: string; name: string | null }) => {
-      if (payload.boardCode !== code) return;
-      const label = payload.name ?? "Someone";
-      const existing = timers.get(label);
-      if (existing) window.clearTimeout(existing);
-      timers.set(
-        label,
-        window.setTimeout(() => {
-          timers.delete(label);
-          setTypingNames(Array.from(timers.keys()));
-        }, 3500)
-      );
-      setTypingNames(Array.from(timers.keys()));
-    };
-    socketClient.on("typing", onTyping);
-    return () => {
-      socketClient.off("typing", onTyping);
-      timers.forEach((t) => window.clearTimeout(t));
-      timers.clear();
-      setTypingNames([]);
-    };
-  }, [boardDetails?.code]);
+  const { typingNames, notifyTyping } = useTypingIndicator(boardDetails?.code, anonymousMode);
 
   const handleComposerChange = useCallback(
     (value: string) => {
       setComposerValue(value);
-      const code = boardDetails?.code;
-      const now = Date.now();
-      if (!code || !value || now - lastTypingEmitRef.current < 2000) return;
-      lastTypingEmitRef.current = now;
-      socketClient.emit("typing", { boardCode: code, anonymous: anonymousMode });
+      notifyTyping(value);
     },
-    [boardDetails?.code, anonymousMode]
+    [notifyTyping]
   );
 
   const handleRetryMessage = useCallback(
@@ -2004,74 +1970,18 @@ export default function BoardRoomPage() {
     };
   }, [boardDetails?.code]);
 
-  // ---- Reactions -------------------------------------------------------------------------------
+  // ---- Reactions ---------------------------------------------------------------------------------
+  const { reactionsById, toggleReaction: handleToggleReaction } = useReactions({
+    boardId: boardDetails?.id,
+    boardCode: boardDetails?.code,
+    messages,
+    authHeaders,
+  });
+
   useEffect(() => {
-    reactionsLoadedRef.current = new Set();
-    setReactionsById({});
     setReplyingTo(null);
-    setReads({});
   }, [boardDetails?.id]);
 
-  useEffect(() => {
-    const boardId = boardDetails?.id;
-    const headers = authHeaders();
-    if (!boardId || !headers) return;
-    const missing = messages
-      .map((m) => m.id)
-      .filter((id): id is string => Boolean(id) && !reactionsLoadedRef.current.has(id as string))
-      .slice(-200);
-    if (missing.length === 0) return;
-    missing.forEach((id) => reactionsLoadedRef.current.add(id));
-    axios
-      .get(`${BACKEND}/api/boards/${boardId}/reactions`, { params: { ids: missing.join(",") }, headers })
-      .then((res) => setReactionsById((prev) => ({ ...prev, ...res.data.reactions })))
-      .catch(() => missing.forEach((id) => reactionsLoadedRef.current.delete(id)));
-  }, [messages, boardDetails?.id, authHeaders]);
-
-  useEffect(() => {
-    const code = boardDetails?.code;
-    if (!code) return;
-    const onUpdate = (p: { boardCode: string; commentId: string; counts: { emoji: string; count: number }[] }) => {
-      if (p.boardCode !== code) return;
-      setReactionsById((prev) => {
-        const mine = new Set((prev[p.commentId] ?? []).filter((r) => r.mine).map((r) => r.emoji));
-        return {
-          ...prev,
-          [p.commentId]: p.counts.map((c) => ({ emoji: c.emoji, count: c.count, mine: mine.has(c.emoji) })),
-        };
-      });
-    };
-    socketClient.on("reaction:update", onUpdate);
-    return () => {
-      socketClient.off("reaction:update", onUpdate);
-    };
-  }, [boardDetails?.code]);
-
-  const handleToggleReaction = useCallback(
-    async (messageId: string, emoji: string) => {
-      const headers = authHeaders();
-      if (!headers) return;
-      const before = reactionsById[messageId] ?? [];
-      // Optimistic flip; the server's answer replaces it either way.
-      setReactionsById((prev) => {
-        const list = prev[messageId] ?? [];
-        const existing = list.find((r) => r.emoji === emoji);
-        let next: ReactionSummary[];
-        if (!existing) next = [...list, { emoji, count: 1, mine: true }];
-        else if (existing.mine) next = list.map((r) => (r.emoji === emoji ? { ...r, count: r.count - 1, mine: false } : r)).filter((r) => r.count > 0);
-        else next = list.map((r) => (r.emoji === emoji ? { ...r, count: r.count + 1, mine: true } : r));
-        return { ...prev, [messageId]: next };
-      });
-      try {
-        const res = await axios.post(`${BACKEND}/api/messages/${messageId}/reactions`, { emoji }, { headers });
-        setReactionsById((prev) => ({ ...prev, [messageId]: res.data.reactions }));
-      } catch {
-        setReactionsById((prev) => ({ ...prev, [messageId]: before }));
-        toast.error("Couldn't add that reaction.");
-      }
-    },
-    [authHeaders, reactionsById]
-  );
 
   // ---- Replies + images ----------------------------------------------------------------------------
   const handleReplyTo = useCallback((message: ChatMessage) => {
@@ -2120,62 +2030,15 @@ export default function BoardRoomPage() {
     [authHeaders, boardDetails?.id]
   );
 
-  // ---- Read receipts -------------------------------------------------------------------------------
-  useEffect(() => {
-    const boardId = boardDetails?.id;
-    const headers = authHeaders();
-    if (!boardId || !headers || readOnly) return;
-    let cancelled = false;
-    axios
-      .get(`${BACKEND}/api/boards/${boardId}/reads`, { headers })
-      .then((res) => {
-        if (cancelled) return;
-        const next: Record<string, string> = {};
-        for (const r of res.data.reads as { userId: string; lastReadAt: string }[]) next[r.userId] = r.lastReadAt;
-        setReads(next);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [boardDetails?.id, authHeaders, readOnly]);
-
-  useEffect(() => {
-    const boardId = boardDetails?.id;
-    const headers = authHeaders();
-    if (!boardId || !headers || readOnly || messages.length === 0) return;
-    const timer = window.setTimeout(() => {
-      if (document.visibilityState === "visible") {
-        axios.put(`${BACKEND}/api/boards/${boardId}/read`, undefined, { headers }).catch(() => undefined);
-      }
-    }, 1200);
-    return () => window.clearTimeout(timer);
-  }, [messages.length, boardDetails?.id, authHeaders, readOnly]);
-
-  useEffect(() => {
-    const code = boardDetails?.code;
-    if (!code) return;
-    const onRead = (p: { boardCode: string; userId: string; at: string }) => {
-      if (p.boardCode === code && p.userId !== user?.id) setReads((prev) => ({ ...prev, [p.userId]: p.at }));
-    };
-    socketClient.on("read:update", onRead);
-    return () => {
-      socketClient.off("read:update", onRead);
-    };
-  }, [boardDetails?.code, user?.id]);
-
-  const seenBy = useMemo(() => {
-    if (!user) return null;
-    const own = [...messages].reverse().find((m) => m.id && m.status !== "sending" && m.status !== "failed" && (m.userId === user.id || m.senderId === user.id));
-    if (!own?.id || !own.createdAt) return null;
-    const sentAt = new Date(own.createdAt).getTime();
-    const names = (boardDetails?.members ?? [])
-      .filter((m) => m.userId !== user.id && reads[m.userId] && new Date(reads[m.userId]).getTime() >= sentAt)
-      .map((m) => m.user.name.split(" ")[0]);
-    if (names.length === 0) return null;
-    const label = names.length <= 2 ? `Seen by ${names.join(", ")}` : `Seen by ${names[0]} +${names.length - 1}`;
-    return { messageId: own.id, label };
-  }, [messages, reads, boardDetails?.members, user]);
+  const seenBy = useReadReceipts({
+    boardId: boardDetails?.id,
+    boardCode: boardDetails?.code,
+    messages,
+    members: boardDetails?.members ?? [],
+    userId: user?.id,
+    readOnly,
+    authHeaders,
+  });
 
   const handleRetryComments = useCallback(async () => {
     if (!boardDetails?.id || !boardDetails.code) return;
