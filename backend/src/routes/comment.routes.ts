@@ -3,6 +3,10 @@ import { createComment, getComments, getCommentsByCode } from '../controllers/co
 import { authenticate } from '../middlewares/auth.middleware';
 import { validate } from '../middlewares/validate';
 import { commentSchema } from '../validators/comment.schema';
+import { rateLimit } from '../middlewares/rateLimit';
+
+// Generous for humans, tight enough to stop a script from flooding a board.
+const sendLimiter = rateLimit({ windowMs: 60_000, max: 40, name: 'message' });
 
 const router = express.Router();
 
@@ -40,7 +44,7 @@ const router = express.Router();
  *       401:
  *         description: Unauthorized
  */
-router.post('/', authenticate, validate(commentSchema), createComment);
+router.post('/', authenticate, sendLimiter, validate(commentSchema), createComment);
 
 /**
  * @swagger

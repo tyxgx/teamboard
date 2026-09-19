@@ -1,7 +1,10 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import { List, useListRef } from "react-window";
 import type { RowComponentProps } from "react-window";
 import { MessageBubble } from "./MessageBubble";
+import { AttachmentImage } from "./AttachmentImage";
+import { MessageText } from "./MessageText";
+import type { ReactionSummary } from "./ReactionBar";
 
 export type ChatMessage = {
   id?: string;
@@ -16,6 +19,11 @@ export type ChatMessage = {
   userId?: string;
   senderId?: string;
   status?: "sending" | "sent" | "failed";
+  parentId?: string | null;
+  editedAt?: string | null;
+  mentions?: string[];
+  replyTo?: { id: string; sender: string; snippet: string } | null;
+  attachment?: { id: string; mime: string; size: number } | null;
 };
 
 type MessageListProps = {
@@ -28,6 +36,15 @@ type MessageListProps = {
   isLoadingOlder?: boolean;
   onLoadOlder?: () => void;
   hasMoreMessages?: boolean;
+  onRetryMessage?: (clientMessageId: string) => void;
+  reactionsById?: Record<string, ReactionSummary[]>;
+  onToggleReaction?: (messageId: string, emoji: string) => void;
+  onReply?: (message: ChatMessage) => void;
+  mentionNames?: string[];
+  onEditMessage?: (message: ChatMessage) => void;
+  onDeleteMessage?: (message: ChatMessage) => void;
+  /** "Seen by …" label shown under the caller's most recent message */
+  seenBy?: { messageId: string; label: string } | null;
 };
 
 const humanizeDate = (timestamp?: string) => {
@@ -48,7 +65,7 @@ const humanizeDate = (timestamp?: string) => {
   return target.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 };
 
-export const MessageList = ({
+const MessageListInner = ({
   messages,
   isAdmin,
   currentUserId,
@@ -58,6 +75,14 @@ export const MessageList = ({
   isLoadingOlder = false,
   onLoadOlder,
   hasMoreMessages,
+  onRetryMessage,
+  reactionsById,
+  onToggleReaction,
+  onReply,
+  mentionNames = [],
+  onEditMessage,
+  onDeleteMessage,
+  seenBy,
 }: MessageListProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useListRef(null);
@@ -215,6 +240,37 @@ export const MessageList = ({
   }, [grouped]);
 
   // TASK 2.2: Only virtualize if we have more than 50 messages
+  const bubbleExtras = (msg: ChatMessage) => {
+    const own = Boolean(currentUserId && (msg.userId === currentUserId || msg.senderId === currentUserId));
+    const sent = Boolean(msg.id) && msg.status !== "sending" && msg.status !== "failed";
+    return {
+    edited: Boolean(msg.editedAt),
+    onEdit: own && sent && onEditMessage ? () => onEditMessage(msg) : undefined,
+    onDelete: (own || isAdmin) && sent && onDeleteMessage ? () => onDeleteMessage(msg) : undefined,
+    replyTo: msg.replyTo ?? null,
+    image: msg.attachment ? <AttachmentImage id={msg.attachment.id} mime={msg.attachment.mime} /> : undefined,
+    reactions: msg.id ? reactionsById?.[msg.id] : undefined,
+    onReact: msg.id && onToggleReaction ? (emoji: string) => onToggleReaction(msg.id!, emoji) : undefined,
+    onReply: msg.id && onReply ? () => onReply(msg) : undefined,
+    seenBy: seenBy && msg.id === seenBy.messageId ? seenBy.label : undefined,
+  };
+  };
+
+  // react-window needs a height per row. Messages vary (quotes, images, reactions, long text), so estimate.
+  const estimateRowHeight = (index: number) => {
+    const item = virtualItems[index];
+    if (!item || item.type === "header") return 48;
+    const m = item.message;
+    if (m.system) return 44;
+    const lines = Math.max(1, Math.ceil((m.message?.length ?? 0) / 48)) + (m.message?.split("\n").length ?? 1) - 1;
+    let h = 76 + (lines - 1) * 24;
+    if (m.replyTo) h += 52;
+    if (m.attachment) h += 270;
+    if (m.id && reactionsById?.[m.id]?.length) h += 32;
+    if (seenBy && m.id === seenBy.messageId) h += 16;
+    return h;
+  };
+
   const shouldVirtualize = messages.length > 50;
 
   // TASK 2.2: Scroll to bottom when new messages arrive (after virtualItems is defined)
@@ -278,18 +334,23 @@ export const MessageList = ({
           authorName={msg.sender}
           actualSender={actualName}
           timestamp={createdAt}
+          {...bubbleExtras(msg)}
         >
-          <span>{msg.message}</span>
+          <span><MessageText text={msg.message} mentionNames={mentionNames} selfName={currentUserName} isOwn={isOwn} /></span>
           {msg.status === "sending" ? (
             <span className="ml-2 inline-flex items-center text-[11px] opacity-60">
               <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>
               sending
             </span>
-          ) : msg.status === "sent" ? (
-            <span className="ml-2 inline-flex items-center text-[11px] opacity-70">✓</span>
           ) : null}
           {msg.status === "failed" ? (
-            <span className="ml-2 align-middle text-[10px] text-red-500">failed</span>
+            <button
+                type="button"
+                onClick={() => msg.clientMessageId && onRetryMessage?.(msg.clientMessageId)}
+                className="ml-2 inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 align-middle text-[10px] font-semibold text-red-500 hover:bg-red-500/20"
+              >
+                Not sent · Retry
+              </button>
           ) : null}
         </MessageBubble>
       </div>
@@ -300,7 +361,7 @@ export const MessageList = ({
     <div className="relative flex-1 overflow-hidden">
       {shouldVirtualize ? (
         // TASK 2.2: Virtualized rendering for large message lists
-        <div ref={containerRef} className="h-full bg-gradient-to-b from-slate-50 via-slate-50/80 to-slate-100/50">
+        <div ref={containerRef} role="log" aria-label="Messages" className="h-full bg-gradient-to-b from-slate-50 via-slate-50/80 to-slate-100/50">
           {/* Loading indicator for older messages */}
           {(isLoadingOlder || isLoadingOlderState) && messages.length > 0 && hasMoreMessages !== false ? (
             <div className="flex justify-center py-2">
@@ -314,7 +375,7 @@ export const MessageList = ({
             listRef={listRef}
             defaultHeight={containerHeight}
             rowCount={virtualItems.length}
-            rowHeight={80} // Approximate height per item (header: ~40px, message: ~80px)
+            rowHeight={estimateRowHeight}
             rowComponent={renderVirtualItem}
             rowProps={{}}
             style={{ padding: '16px', height: containerHeight }}
@@ -333,6 +394,8 @@ export const MessageList = ({
         // Non-virtualized rendering for small message lists (<50 messages)
         <div
           ref={containerRef}
+          role="log"
+          aria-label="Messages"
           onScroll={updateNearBottom}
           className="h-full overflow-y-auto bg-gradient-to-b from-slate-50 via-slate-50/80 to-slate-100/50 py-4"
           style={{ scrollBehavior: "smooth" }}
@@ -366,7 +429,16 @@ export const MessageList = ({
                 ))}
               </>
             ) : grouped.length === 0 ? (
-              <div className="py-20 text-center text-sm text-slate-400">No messages yet. Start the conversation!</div>
+              <div className="mx-auto max-w-sm px-6 py-14 text-center">
+                <span className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-2xl bg-emerald-500/10 text-xl text-emerald-600">💬</span>
+                <p className="text-base font-semibold text-slate-800">This board is quiet. Say something.</p>
+                <ul className="mt-4 space-y-2 text-left text-sm text-slate-500">
+                  <li><span aria-hidden>🕶️</span> Turn on anonymous to post without your name.</li>
+                  <li><span aria-hidden>🛡️</span> Members can send admin-only notes that only admins see.</li>
+                  <li><span aria-hidden>@</span> Type @ to mention someone.</li>
+                  <li><span aria-hidden>⌨️</span> Press <kbd className="rounded border border-slate-200 px-1 font-mono text-xs">?</kbd> for shortcuts.</li>
+                </ul>
+              </div>
             ) : (
               grouped.map(([label, bucket]) => (
                 <Fragment key={label || bucket[0]?.id || Math.random().toString()}>
@@ -416,18 +488,23 @@ export const MessageList = ({
                             authorName={msg.sender}
                             actualSender={actualName}
                             timestamp={createdAt}
+                            {...bubbleExtras(msg)}
                           >
-                            <span>{msg.message}</span>
+                            <span><MessageText text={msg.message} mentionNames={mentionNames} selfName={currentUserName} isOwn={isOwn} /></span>
                             {msg.status === "sending" ? (
                               <span className="ml-2 inline-flex items-center text-[11px] opacity-60">
                                 <span className="mr-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>
                                 sending
                               </span>
-                            ) : msg.status === "sent" ? (
-                              <span className="ml-2 inline-flex items-center text-[11px] opacity-70">✓</span>
                             ) : null}
                             {msg.status === "failed" ? (
-                              <span className="ml-2 align-middle text-[10px] text-red-500">failed</span>
+                              <button
+                type="button"
+                onClick={() => msg.clientMessageId && onRetryMessage?.(msg.clientMessageId)}
+                className="ml-2 inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 align-middle text-[10px] font-semibold text-red-500 hover:bg-red-500/20"
+              >
+                Not sent · Retry
+              </button>
                             ) : null}
                           </MessageBubble>
                         </div>
@@ -439,8 +516,8 @@ export const MessageList = ({
             )}
 
             {typingIndicator.length ? (
-              <div className="ml-12 max-w-max rounded-full bg-slate-100 px-4 py-2 text-xs text-slate-500">
-                {typingIndicator.join(", ")} typing…
+              <div aria-live="polite" className="ml-12 max-w-max rounded-full bg-slate-100 px-4 py-2 text-xs text-slate-500">
+                {typingIndicator.join(", ")} {typingIndicator.length > 1 ? "are" : "is"} typing…
               </div>
             ) : null}
           </div>
@@ -459,3 +536,6 @@ export const MessageList = ({
     </div>
   );
 };
+
+// Typing in the composer re-renders the page on every keystroke; the list only needs to redraw when its own props change.
+export const MessageList = memo(MessageListInner);

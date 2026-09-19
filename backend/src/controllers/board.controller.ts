@@ -232,7 +232,7 @@ export const getBoardById = async (req: Request, res: Response): Promise<void> =
             status: true,
             leftAt: true,
             pinned: true,
-            user: { select: { id: true, name: true, email: true } },
+            user: { select: { id: true, name: true, email: true, avatarMime: true } },
           },
         },
       },
@@ -374,7 +374,7 @@ export const getBoardByCode = async (req: Request, res: Response): Promise<void>
             status: true,
             leftAt: true,
             pinned: true,
-            user: { select: { id: true, name: true, email: true } },
+            user: { select: { id: true, name: true, email: true, avatarMime: true } },
           },
         },
       },
@@ -554,6 +554,7 @@ export const deleteBoard = async (req: Request, res: Response): Promise<void> =>
       return;
     }
 
+    await prisma.attachment.deleteMany({ where: { boardId: id } });
     await prisma.comment.deleteMany({ where: { boardId: id } });
     await prisma.boardMembership.deleteMany({ where: { boardId: id } });
     await prisma.board.delete({ where: { id } });
@@ -697,6 +698,7 @@ export const bulkDeleteBoards = async (req: Request, res: Response): Promise<voi
     // Delete all in a single transaction
     await prisma.$transaction(
       validBoardIds.flatMap((boardId) => [
+        prisma.attachment.deleteMany({ where: { boardId } }),
         prisma.comment.deleteMany({ where: { boardId } }),
         prisma.boardMembership.deleteMany({ where: { boardId } }),
         prisma.board.delete({ where: { id: boardId } }),

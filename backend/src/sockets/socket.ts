@@ -15,6 +15,10 @@ interface JwtPayload {
 // ✅ Maintain mapping for disconnect events
 const userMap = new Map<string, { name: string; boardCode: string }>();
 
+// Typing indicators are throttled server-side too, so a misbehaving client can't flood a room.
+const TYPING_MIN_INTERVAL_MS = 1000;
+const lastTypingAt = new Map<string, number>();
+
 let ioInstance: Server | null = null;
 
 /**
@@ -151,7 +155,21 @@ export function setupSocket(server: http.Server) {
       // No-op: REST pipeline broadcasts messages to avoid duplicates.
     });
 
+    // Ephemeral typing indicator: socket-only, nothing is stored. The sender must already be in the
+    // room (join-board verified membership). Name is only revealed when the client explicitly says it
+    // is NOT typing anonymously; anything else is broadcast as an anonymous "someone".
+    socket.on('typing', (payload: { boardCode?: string; anonymous?: boolean }) => {
+      const boardCode = payload?.boardCode;
+      if (!boardCode || typeof boardCode !== 'string' || !socket.rooms.has(boardCode)) return;
+      const now = Date.now();
+      if (now - (lastTypingAt.get(socket.id) ?? 0) < TYPING_MIN_INTERVAL_MS) return;
+      lastTypingAt.set(socket.id, now);
+      const name = payload.anonymous === false ? (userMap.get(socket.id)?.name ?? null) : null;
+      socket.to(boardCode).emit('typing', { boardCode, name });
+    });
+
     socket.on('disconnect', (reason) => {
+      lastTypingAt.delete(socket.id);
       const user = userMap.get(socket.id);
       if (user) {
         if (shouldLog) {

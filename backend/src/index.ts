@@ -17,6 +17,7 @@ import authRoutes from './routes/auth.routes';
 import boardRoutes from './routes/board.routes'; // ✅ Only once
 import commentRoutes from './routes/comment.routes';
 import userRoutes from './routes/user.routes';
+import engagementRoutes from './routes/engagement.routes';
 
 const app = express();
 
@@ -65,6 +66,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/boards', boardRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api', engagementRoutes);
 app.use(testRoutes); // ✅ ADD this line
 
 // ✅ Swagger API docs

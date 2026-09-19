@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+/* Class-based dark mode so the in-app toggle (not just the OS setting) controls it */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+}
+
 /* CSS Variables for Theming */
 :root {
   --color-bg-primary: #ffffff;
@@ -8,19 +16,30 @@
   --color-text-secondary: #64748b;
   --color-accent: #10b981;
   --color-accent-hover: #059669;
-  --gradient-hero: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #10b981 100%);
-  --gradient-subtle: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 50%, rgba(16, 185, 129, 0.1) 100%);
+  /* Ambient accent glow instead of a flat diagonal 3-stop rainbow */
+  --gradient-hero:
+    radial-gradient(60% 50% at 12% 8%, rgba(16, 185, 129, 0.16) 0%, rgba(16, 185, 129, 0) 60%),
+    radial-gradient(55% 45% at 88% 92%, rgba(45, 212, 191, 0.14) 0%, rgba(45, 212, 191, 0) 60%);
+  --gradient-subtle: linear-gradient(180deg, rgba(16, 185, 129, 0.06) 0%, rgba(16, 185, 129, 0) 100%);
+  --shadow-color: 222deg 47% 11%;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-bg-primary: #0f172a;
-    --color-bg-secondary: #1e293b;
+@media all {
+  :root.dark {
+    --color-bg-primary: #0b1220;
+    --color-bg-secondary: #131c2e;
     --color-text-primary: #f1f5f9;
     --color-text-secondary: #94a3b8;
-    --gradient-hero: linear-gradient(135deg, #4c1d95 0%, #5b21b6 50%, #059669 100%);
-    --gradient-subtle: linear-gradient(135deg, rgba(76, 29, 149, 0.2) 0%, rgba(91, 33, 182, 0.2) 50%, rgba(5, 150, 105, 0.2) 100%);
+    --gradient-hero:
+      radial-gradient(60% 50% at 12% 8%, rgba(16, 185, 129, 0.22) 0%, rgba(16, 185, 129, 0) 60%),
+      radial-gradient(55% 45% at 88% 92%, rgba(45, 212, 191, 0.16) 0%, rgba(45, 212, 191, 0) 60%);
+    --gradient-subtle: linear-gradient(180deg, rgba(16, 185, 129, 0.1) 0%, rgba(16, 185, 129, 0) 100%);
   }
+}
+
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
 /* Custom base styles */
@@ -28,31 +47,37 @@
   overflow-wrap: anywhere;
 }
 
-/* Glassmorphism utility */
-.glass {
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+/* Visible keyboard focus ring everywhere, incl. custom controls without a browser default */
+:focus-visible {
+  outline: 2px solid #10b981;
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
-@media (prefers-color-scheme: dark) {
-  .glass {
-    background: rgba(15, 23, 42, 0.3);
+/* Glassmorphism utility, with an inner border/highlight to fake edge refraction */
+.glass {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 8px 24px -8px hsl(var(--shadow-color) / 0.35);
+}
+
+@media all {
+  .dark .glass {
+    background: rgba(15, 23, 42, 0.35);
     border: 1px solid rgba(255, 255, 255, 0.1);
   }
 }
 
-/* Neumorphism utility */
-.neu {
-  background: var(--color-bg-secondary);
-  box-shadow: 8px 8px 16px rgba(0, 0, 0, 0.1), -8px -8px 16px rgba(255, 255, 255, 0.1);
-}
-
-@media (prefers-color-scheme: dark) {
-  .neu {
-    box-shadow: 8px 8px 16px rgba(0, 0, 0, 0.3), -8px -8px 16px rgba(255, 255, 255, 0.05);
-  }
+/* Fixed, pointer-events-none grain overlay to break flat digital surfaces */
+.grain-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 /* Animations */
@@ -78,15 +103,6 @@
   }
 }
 
-@keyframes gradientShift {
-  0%, 100% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
-  }
-}
-
 @keyframes float {
   0%, 100% {
     transform: translateY(0px);
@@ -96,13 +112,8 @@
   }
 }
 
-.animate-gradient {
-  background-size: 200% 200%;
-  animation: gradientShift 8s ease infinite;
-}
-
 .animate-float {
-  animation: float 3s ease-in-out infinite;
+  animation: float 4s ease-in-out infinite;
 }
 
 /* Smooth scroll */
@@ -110,8 +121,60 @@ html {
   scroll-behavior: smooth;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .animate-float {
+    animation: none;
+  }
+}
+
 /* Performance: GPU acceleration for transforms */
 .gpu-accelerated {
   transform: translateZ(0);
   will-change: transform;
+}
+
+/*
+  Dark theme for the chat UI. The components use plain Tailwind slate/white
+  utilities, so remap those under .dark instead of duplicating every class
+  with a dark: variant.
+*/
+.dark body { background: #0b1220; color: #f1f5f9; }
+.dark .bg-white { background-color: #131c2e; }
+.dark .bg-white\/90 { background-color: rgba(19, 28, 46, 0.9); }
+.dark .bg-slate-50 { background-color: #0f1727; }
+.dark .bg-slate-100 { background-color: #0b1220; }
+.dark .bg-slate-200 { background-color: #1e293b; }
+.dark .bg-slate-300 { background-color: #334155; }
+.dark .hover\:bg-slate-100:hover, .dark .hover\:bg-slate-50:hover { background-color: #1e293b; }
+.dark .hover\:bg-slate-200:hover { background-color: #263349; }
+.dark .hover\:bg-white:hover, .dark .focus\:bg-white:focus { background-color: #1a2438; }
+.dark .text-slate-900 { color: #f1f5f9; }
+.dark .text-slate-700 { color: #cbd5e1; }
+.dark .text-slate-600 { color: #b6c2d3; }
+.dark .text-slate-500 { color: #94a3b8; }
+.dark .text-slate-400 { color: #8494ab; }
+.dark .border-slate-200, .dark .border-slate-300,
+.dark .border-slate-200\/70, .dark .border-slate-200\/80 { border-color: rgba(148, 163, 184, 0.18); }
+.dark .border-black\/5 { border-color: rgba(255, 255, 255, 0.08); }
+.dark .divide-slate-200 > :not(:last-child) { border-color: rgba(148, 163, 184, 0.18); }
+.dark .bg-amber-50 { background-color: rgba(245, 158, 11, 0.12); }
+.dark .bg-red-50 { background-color: rgba(239, 68, 68, 0.12); }
+.dark .border-red-200 { border-color: rgba(239, 68, 68, 0.3); }
+.dark .text-emerald-700 { color: #6ee7b7; }
+.dark .text-emerald-600 { color: #34d399; }
+.dark .bg-emerald-50, .dark .hover\:bg-emerald-50:hover { background-color: rgba(16, 185, 129, 0.12); }
+.dark .from-slate-50 { --tw-gradient-from: #0f1727; }
+.dark .to-slate-100\/50 { --tw-gradient-to: rgba(11, 18, 32, 0.5); }
+.dark .placeholder\:text-slate-400::placeholder { color: #64748b; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -13,12 +13,17 @@ model User {
   name             String
   email            String            @unique
   image            String? // Optional profile picture
+  // Uploaded avatar (small image stored in Postgres, see avatar.controller.ts); overrides `image` when set
+  avatarMime       String?
+  avatarData       Bytes?
   googleId         String? // Optional Google ID
   role             String            @default("MEMBER")
   comments         Comment[]
   boardMemberships BoardMembership[]
   createdBoards    Board[]           @relation("UserCreatedBoards")
   lastCommentBoards Board[]          @relation("BoardLastCommentSender")
+  reactions        Reaction[]
+  attachments      Attachment[]
 }
 
 model Board {
@@ -39,6 +44,7 @@ model Board {
   createdByUser User              @relation("UserCreatedBoards", fields: [createdBy], references: [id])
   comments      Comment[]
   members       BoardMembership[]
+  attachments   Attachment[]
 
   @@index([lastActivity], map: "idx_board_last_activity")
   @@index([lastCommentAt], map: "idx_board_last_comment_at")
@@ -52,6 +58,8 @@ model BoardMembership {
   pinned  Boolean @default(false)
   status  MembershipStatus @default(ACTIVE)
   leftAt  DateTime?
+  // Last time this member had the board open and scrolled to the latest message (read receipts)
+  lastReadAt DateTime?
 
   user  User  @relation(fields: [userId], references: [id])
   board Board @relation(fields: [boardId], references: [id])
@@ -71,15 +79,60 @@ model Comment {
   createdAt   DateTime   @default(now())
   // Optional client-generated UUID for idempotency and optimistic sends
   clientId    String?
+  // Reply-to: points at the message being answered (same board, checked in the controller)
+  parentId    String?
+  // Set when the author edits the message after sending
+  editedAt    DateTime?
+  // User ids @-mentioned in the text, limited to people who are allowed to see the message
+  mentions    String[]  @default([])
 
   createdBy User  @relation(fields: [createdById], references: [id])
   board     Board @relation(fields: [boardId], references: [id])
+  parent    Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: SetNull)
+  replies   Comment[] @relation("CommentReplies")
+  reactions Reaction[]
+  attachment Attachment?
 
   @@index([boardId, createdAt], map: "idx_comment_board_created")
   @@index([boardId, createdAt, id], map: "idx_comment_board_created_id")
   @@unique([boardId, clientId], map: "uq_comment_board_client_id")
   @@index([createdById], map: "idx_comment_created_by")
+  @@index([parentId], map: "idx_comment_parent")
   @@index([boardId, visibility, createdAt], map: "idx_comment_board_visibility_created")
+}
+
+model Reaction {
+  id        String   @id @default(uuid())
+  commentId String
+  userId    String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@unique([commentId, userId, emoji], map: "uq_reaction_comment_user_emoji")
+  @@index([commentId], map: "idx_reaction_comment")
+}
+
+// Image attachments are stored in Postgres (bytea, capped at 2MB) so the app needs no separate
+// object store. Move to S3 if usage grows: only the read/write in attachment.controller.ts changes.
+model Attachment {
+  id         String   @id @default(uuid())
+  boardId    String
+  uploaderId String
+  mime       String
+  size       Int
+  data       Bytes
+  createdAt  DateTime @default(now())
+  // Set when the message that carries the image is created; null while it is only uploaded
+  commentId  String?  @unique
+
+  board    Board    @relation(fields: [boardId], references: [id])
+  uploader User     @relation(fields: [uploaderId], references: [id])
+  comment  Comment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@index([boardId], map: "idx_attachment_board")
 }
 
 enum Role {

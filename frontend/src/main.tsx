@@ -6,6 +6,9 @@ import App from "./App";
 // TASK 3.1: Lazy load BoardRoomPage for code splitting
 const BoardRoomPage = lazy(() => import("./BoardRoomPage"));
 import Landing from "./pages/Landing";
+import NotFound from "./pages/NotFound";
+import { ErrorBoundary } from "./components/ui/ErrorBoundary";
+import { Toaster } from "sonner";
 import "./index.css";
 
 // TASK 3.1: Loading skeleton for lazy-loaded components
@@ -20,6 +23,7 @@ const LoadingSkeleton = () => (
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
+    <ErrorBoundary>
     <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID as string}>
       <BrowserRouter>
         <Routes>
@@ -33,8 +37,11 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
               </Suspense>
             } 
           />
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
+      <Toaster position="top-right" richColors closeButton />
     </GoogleOAuthProvider>
+    </ErrorBoundary>
   </React.StrictMode>
 );

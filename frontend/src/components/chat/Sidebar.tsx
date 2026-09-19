@@ -25,6 +25,7 @@ type SidebarProps = {
   boards: SidebarBoard[];
   activeCode?: string | null;
   unreadByBoard: Record<string, number>;
+  mentionsByBoard?: Record<string, number>;
   onSelectBoard: (code: string) => void;
   onTogglePin: (code: string) => void;
   onHideBoard: (board: { id: string; code: string; name: string }) => void;
@@ -71,6 +72,7 @@ export const Sidebar = React.memo(({
   boards,
   activeCode,
   unreadByBoard,
+  mentionsByBoard = {},
   onSelectBoard,
   onTogglePin,
   onHideBoard,
@@ -152,12 +154,12 @@ export const Sidebar = React.memo(({
 
   const containerClass =
     variant === "mobile"
-      ? "flex h-full w-[85vw] max-w-[320px] flex-col bg-slate-900/95 text-slate-100 md:hidden"
-      : "hidden h-full flex-col bg-slate-900/95 text-slate-100 md:flex md:w-[300px]";
+      ? "flex h-full w-[85vw] max-w-[320px] flex-col bg-slate-900 text-slate-100 md:hidden"
+      : "hidden h-full flex-col bg-slate-900 text-slate-100 md:flex md:w-[300px]";
 
   return (
     <aside className={containerClass}>
-      <div className="flex items-center justify-between px-5 pb-4 pt-6">
+      <div className="flex items-center justify-between border-b border-white/5 px-5 pb-4 pt-6">
         <button
           type="button"
           className="text-left"
@@ -166,8 +168,11 @@ export const Sidebar = React.memo(({
             navigate("/app");
           }}
         >
-          <h1 className="text-2xl font-bold text-emerald-400">TeamBoard</h1>
-          <p className="text-xs text-slate-400">Live, anonymous team feedback</p>
+          <h1 className="flex items-center gap-2 text-xl font-bold tracking-tight text-white">
+            <span className="grid h-7 w-7 place-items-center rounded-lg bg-emerald-500/15 text-sm text-emerald-400">◆</span>
+            TeamBoard
+          </h1>
+          <p className="mt-1 text-xs text-slate-400">Live, anonymous team feedback</p>
         </button>
         <div className="relative">
           <button
@@ -176,14 +181,14 @@ export const Sidebar = React.memo(({
               event.stopPropagation();
               setAccountMenu((prev) => !prev);
             }}
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-800 text-lg transition hover:bg-slate-700"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-lg text-slate-400 transition hover:bg-white/5 hover:text-slate-100"
             aria-label="Account menu"
           >
             ⋮
           </button>
           {accountMenu ? (
             <div
-              className="absolute right-0 z-30 mt-2 w-44 rounded-xl bg-slate-800/95 py-2 text-sm shadow-xl"
+              className="absolute right-0 z-30 mt-2 w-44 rounded-xl border border-white/10 bg-slate-800 py-1.5 text-sm shadow-2xl shadow-black/40"
               onClick={(event) => event.stopPropagation()}
             >
               <button
@@ -194,7 +199,7 @@ export const Sidebar = React.memo(({
                   setSelectionMode(true);
                   setSelectedBoardIds(new Set());
                 }}
-                className="block w-full px-4 py-2 text-left text-slate-200 transition hover:bg-slate-700/50"
+                className="block w-full px-4 py-2 text-left text-slate-200 transition hover:bg-white/5"
               >
                 Select boards
               </button>
@@ -205,7 +210,7 @@ export const Sidebar = React.memo(({
                   closeIfMobile();
                   onLogout();
                 }}
-                className="block w-full px-4 py-2 text-left text-slate-200 transition hover:bg-slate-700/50"
+                className="block w-full px-4 py-2 text-left text-slate-200 transition hover:bg-white/5"
               >
                 Logout
               </button>
@@ -214,15 +219,15 @@ export const Sidebar = React.memo(({
         </div>
       </div>
 
-      <div className="px-5 pb-4">
-        <div className="flex items-center gap-2 rounded-full bg-slate-800/80 px-4 py-2 text-sm text-slate-300">
-          <span aria-hidden>🔍</span>
+      <div className="px-5 pb-4 pt-4">
+        <div className="flex items-center gap-2 rounded-xl border border-white/5 bg-white/[0.04] px-3.5 py-2.5 text-sm text-slate-300 transition focus-within:border-emerald-500/40 focus-within:bg-white/[0.06]">
+          <span className="text-slate-500" aria-hidden>⌕</span>
           <input
             type="search"
             placeholder="Search boards"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            className="w-full bg-transparent text-sm text-slate-300 placeholder:text-slate-500 focus:outline-none"
+            className="w-full bg-transparent text-sm text-slate-200 placeholder:text-slate-500 focus:outline-none"
           />
         </div>
       </div>
@@ -233,7 +238,7 @@ export const Sidebar = React.memo(({
           <div className="space-y-1.5">
             {[...Array(5)].map((_, i) => (
               <div key={i} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 animate-pulse">
-                <div className="h-9 w-9 shrink-0 rounded-full bg-slate-700/60" />
+                <div className="h-9 w-9 shrink-0 rounded-[10px] bg-slate-700/60" />
                 <div className="flex-1 space-y-2">
                   <div className="h-4 w-24 rounded bg-slate-700/60" />
                   <div className="h-3 w-32 rounded bg-slate-700/40" />
@@ -299,10 +304,16 @@ export const Sidebar = React.memo(({
                         delete prefetchTimeoutRef.current[board.code];
                       }
                     }}
-                    className={`flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition ${
-                      isActive ? "bg-slate-700/60 shadow-inner" : isSelected ? "bg-slate-700/50" : "hover:bg-slate-700/40"
+                    className={`relative flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition ${
+                      isActive ? "bg-white/[0.07]" : isSelected ? "bg-white/[0.05]" : "hover:bg-white/[0.04]"
                     }`}
                   >
+                    <span
+                      className={`absolute left-0 top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-full bg-emerald-400 transition-all duration-200 ${
+                        isActive ? "opacity-100" : "opacity-0"
+                      }`}
+                      aria-hidden
+                    />
                     {selectionMode && (
                       <input
                         type="checkbox"
@@ -323,7 +334,11 @@ export const Sidebar = React.memo(({
                         className="h-4 w-4 cursor-pointer rounded border-slate-500 bg-slate-700 text-emerald-500 focus:ring-2 focus:ring-emerald-500 focus:ring-offset-0"
                       />
                     )}
-                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-slate-600/80 text-sm font-semibold text-slate-100">
+                    <div
+                      className={`grid h-9 w-9 shrink-0 place-items-center rounded-[10px] text-sm font-semibold text-slate-100 ${
+                        isActive ? "bg-emerald-600/70" : "bg-slate-700"
+                      }`}
+                    >
                       {board.name
                         .split(" ")
                         .map((word) => word[0])
@@ -335,20 +350,29 @@ export const Sidebar = React.memo(({
                       <div className="flex items-center gap-2">
                         <p className="truncate text-sm font-semibold text-slate-100">{board.name}</p>
                         {board.pinned ? (
-                          <span className="text-xs uppercase tracking-wide text-emerald-400">Pinned</span>
+                          <span className="text-[10px] font-semibold uppercase tracking-wide text-emerald-400">Pinned</span>
                         ) : null}
                         {isReadOnly ? (
-                          <span className="text-xs uppercase tracking-wide text-amber-400">Read only</span>
+                          <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-400">Read only</span>
                         ) : null}
                       </div>
                       <p className="truncate text-xs text-slate-400">{preview}</p>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1">
                       {timeLabel ? (
-                        <span className="text-xs text-slate-400">{timeLabel}</span>
+                        <span className="text-[11px] tabular-nums text-slate-500">{timeLabel}</span>
+                      ) : null}
+                      {(mentionsByBoard[board.code] ?? 0) > 0 ? (
+                        <span
+                          className="grid h-5 min-w-[20px] place-items-center rounded-full bg-amber-400 px-1.5 text-[11px] font-bold text-slate-900"
+                          title="Someone mentioned you"
+                          aria-label="You were mentioned"
+                        >
+                          @
+                        </span>
                       ) : null}
                       {unread > 0 ? (
-                        <span className="grid h-5 min-w-[20px] place-items-center rounded-full bg-emerald-500 px-2 text-[11px] font-semibold text-white">
+                        <span className="grid h-5 min-w-[20px] place-items-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-semibold tabular-nums text-white">
                           {unread > 99 ? "99+" : unread}
                         </span>
                       ) : null}
@@ -370,7 +394,7 @@ export const Sidebar = React.memo(({
                   )}
 
                   {!selectionMode && menuOpen === board.id ? (
-                    <div className="absolute right-0 top-full z-30 mt-2 w-52 rounded-xl bg-slate-800/95 py-2 text-sm text-slate-100 shadow-xl">
+                    <div className="absolute right-0 top-full z-30 mt-2 w-52 rounded-xl border border-white/10 bg-slate-800 py-1.5 text-sm text-slate-100 shadow-2xl shadow-black/40">
                       <button
                         type="button"
                         onClick={() => {
@@ -378,7 +402,7 @@ export const Sidebar = React.memo(({
                           closeIfMobile();
                           onTogglePin(board.code);
                         }}
-                        className="block w-full px-4 py-2 text-left transition hover:bg-slate-700/50"
+                        className="block w-full px-4 py-2 text-left transition hover:bg-white/5"
                       >
                         {board.pinned ? "Unpin board" : "Pin board"}
                       </button>
@@ -389,7 +413,7 @@ export const Sidebar = React.memo(({
                           closeIfMobile();
                           onHideBoard(board);
                         }}
-                        className="block w-full px-4 py-2 text-left transition hover:bg-slate-700/50"
+                        className="block w-full px-4 py-2 text-left transition hover:bg-white/5"
                       >
                         Remove from sidebar
                       </button>
@@ -401,7 +425,7 @@ export const Sidebar = React.memo(({
                             closeIfMobile();
                             onLeaveBoard(board);
                           }}
-                          className="block w-full px-4 py-2 text-left text-red-300 transition hover:bg-red-500/20 hover:text-red-100"
+                          className="block w-full px-4 py-2 text-left text-red-300 transition hover:bg-red-500/10 hover:text-red-200"
                         >
                           Leave board
                         </button>
@@ -416,7 +440,7 @@ export const Sidebar = React.memo(({
       </div>
 
       {selectionMode && selectedBoardIds.size > 0 ? (
-        <div className="border-t border-slate-800/60 bg-slate-900/70 px-4 py-4">
+        <div className="border-t border-white/5 bg-slate-900 px-4 py-4">
           <div className="mb-3 text-center text-sm text-slate-300">
             {selectedBoardIds.size} {selectedBoardIds.size === 1 ? "board" : "boards"} selected
           </div>
@@ -439,7 +463,7 @@ export const Sidebar = React.memo(({
                         setSelectionMode(false);
                         setSelectedBoardIds(new Set());
                       }}
-                      className="rounded-full border border-red-500 px-4 py-2 text-sm font-semibold text-red-500 transition hover:bg-red-500/10"
+                      className="rounded-xl border border-red-500/50 px-4 py-2 text-sm font-semibold text-red-400 transition hover:bg-red-500/10"
                     >
                       Leave {canLeaveBoards.length} {canLeaveBoards.length === 1 ? "board" : "boards"}
                     </button>
@@ -452,7 +476,7 @@ export const Sidebar = React.memo(({
                         setSelectionMode(false);
                         setSelectedBoardIds(new Set());
                       }}
-                      className="rounded-full bg-red-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-600"
+                      className="rounded-xl bg-red-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-600"
                     >
                       Delete {canDeleteBoards.length} {canDeleteBoards.length === 1 ? "board" : "boards"}
                     </button>
@@ -463,7 +487,7 @@ export const Sidebar = React.memo(({
                       setSelectionMode(false);
                       setSelectedBoardIds(new Set());
                     }}
-                    className="rounded-full border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-700/50"
+                    className="rounded-xl border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-white/5"
                   >
                     Cancel
                   </button>
@@ -473,14 +497,14 @@ export const Sidebar = React.memo(({
           </div>
         </div>
       ) : selectionMode ? (
-        <div className="border-t border-slate-800/60 bg-slate-900/70 px-4 py-4">
+        <div className="border-t border-white/5 bg-slate-900 px-4 py-4">
           <button
             type="button"
             onClick={() => {
               setSelectionMode(false);
               setSelectedBoardIds(new Set());
             }}
-            className="w-full rounded-full border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-slate-700/50"
+            className="w-full rounded-xl border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-300 transition hover:bg-white/5"
           >
             Cancel selection
           </button>
@@ -488,8 +512,8 @@ export const Sidebar = React.memo(({
       ) : null}
 
       {!selectionMode && showFooterActions ? (
-        <div className="border-t border-slate-800/60 bg-slate-900/70 px-4 py-4">
-          <div className="flex flex-col gap-3">
+        <div className="border-t border-white/5 bg-slate-900 px-4 py-4">
+          <div className="flex flex-col gap-2.5">
             <button
               type="button"
               onClick={() => {
@@ -497,7 +521,7 @@ export const Sidebar = React.memo(({
                 closeIfMobile();
                 onCreateBoard();
               }}
-              className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-600"
+              className="rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_20px_-8px_rgba(16,185,129,0.6)] transition hover:-translate-y-0.5 hover:bg-emerald-400 active:translate-y-0"
             >
               Create new board
             </button>
@@ -508,7 +532,7 @@ export const Sidebar = React.memo(({
                 closeIfMobile();
                 onJoinBoard();
               }}
-              className="rounded-full border border-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-500 transition hover:bg-emerald-500/10"
+              className="rounded-xl border border-white/10 px-4 py-2.5 text-sm font-semibold text-slate-200 transition hover:border-emerald-500/40 hover:bg-white/5"
             >
               Join with code
             </button>

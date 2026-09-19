@@ -1,3 +1,12 @@
+import { toast } from "sonner";
+import { CommandPalette, type PaletteCommand } from "./components/ui/CommandPalette";
+import { ShortcutsSheet } from "./components/ui/ShortcutsSheet";
+import { SearchDialog } from "./components/chat/SearchDialog";
+import { getShared } from "./api/inflight";
+import { invalidateAvatar } from "./components/ui/Avatar";
+import { useReactions } from "./hooks/useReactions";
+import { useReadReceipts } from "./hooks/useReadReceipts";
+import { useTypingIndicator } from "./hooks/useTypingIndicator";
 import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import axios from "axios";
@@ -15,6 +24,7 @@ import { boardsCache, boardDetailsCache, messagesCache, unreadCountsCache } from
 const BACKEND = import.meta.env.VITE_BACKEND_URL;
 const HIDDEN_STORAGE_KEY = "tb.hiddenBoards";
 const UNREAD_STORAGE_KEY = "tb.unreadByBoard";
+const MENTIONS_STORAGE_KEY = "tb.mentionsByBoard";
 const LAST_BOARD_KEY = "tb.lastBoardCode";
 const REDIRECT_KEY = "tb.redirect";
 
@@ -154,6 +164,10 @@ const mapServerMessage = (
   createdAt: payload.createdAt ?? new Date().toISOString(),
   userId: payload.userId ?? undefined,
   senderId: payload.senderId ?? undefined,
+  editedAt: payload.editedAt ?? null,
+  mentions: payload.mentions ?? [],
+  replyTo: payload.replyTo ?? null,
+  attachment: payload.attachment ?? null,
 });
 
 const usePersistentState = <T,>(
@@ -203,6 +217,20 @@ export default function BoardRoomPage() {
   const [optimisticBoardName, setOptimisticBoardName] = useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [joinDialogOpen, setJoinDialogOpen] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<{ id: string; sender: string; snippet: string } | null>(null);
+  const [pendingAttachment, setPendingAttachment] = useState<{
+    id: string;
+    mime: string;
+    size: number;
+    name: string;
+    previewUrl: string;
+  } | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [editing, setEditing] = useState<{ id: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string } | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [createBoardError, setCreateBoardError] = useState<string | null>(null);
   const [joinBoardError, setJoinBoardError] = useState<string | null>(null);
   const [initialLoadProgress, setInitialLoadProgress] = useState(0);
@@ -212,6 +240,8 @@ export default function BoardRoomPage() {
 
   const [hiddenBoardIds, setHiddenBoardIds] = usePersistentState<string[]>(HIDDEN_STORAGE_KEY, []);
   const [unreadByBoard, setUnreadByBoard] = usePersistentState<Record<string, number>>(UNREAD_STORAGE_KEY, {});
+  // Boards where someone @-mentioned you while you weren't looking at them
+  const [mentionsByBoard, setMentionsByBoard] = usePersistentState<Record<string, number>>(MENTIONS_STORAGE_KEY, {});
 
   const pendingMessagesRef = useRef<Set<string>>(new Set());
   const activeRoomRef = useRef<string | null>(null);
@@ -492,8 +522,8 @@ export default function BoardRoomPage() {
           const fetchFresh = async () => {
             try {
               const [boardResponse, commentsData] = await Promise.all([
-                axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers }),
-                axios.get(`${BACKEND}/api/comments/by-code/${code}?limit=50`, { headers })
+                getShared(`${BACKEND}/api/boards/by-code/${code}`, { headers }),
+                getShared(`${BACKEND}/api/comments/by-code/${code}?limit=50`, { headers })
               ]);
               const details = boardResponse.data as BoardDetails;
               const commentsResponseData = commentsData.data;
@@ -531,8 +561,8 @@ export default function BoardRoomPage() {
           const fetchFresh = async () => {
             try {
               const [boardResponse, commentsData] = await Promise.all([
-                axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers }),
-                axios.get(`${BACKEND}/api/comments/by-code/${code}?limit=50`, { headers })
+                getShared(`${BACKEND}/api/boards/by-code/${code}`, { headers }),
+                getShared(`${BACKEND}/api/comments/by-code/${code}?limit=50`, { headers })
               ]);
               const details = boardResponse.data as BoardDetails;
               const commentsResponseData = commentsData.data;
@@ -563,8 +593,8 @@ export default function BoardRoomPage() {
       try {
         // TASK 1.3: Fetch board details and comments in parallel using new by-code endpoint
         const [boardResponse, commentsData] = await Promise.all([
-          axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers }),
-          axios.get(`${BACKEND}/api/comments/by-code/${code}?limit=50`, { headers })
+          getShared(`${BACKEND}/api/boards/by-code/${code}`, { headers }),
+          getShared(`${BACKEND}/api/comments/by-code/${code}?limit=50`, { headers })
         ]);
         const details = boardResponse.data as BoardDetails;
         const commentsResponseData = commentsData.data;
@@ -777,8 +807,8 @@ export default function BoardRoomPage() {
             try {
               // TASK 1.3: Use parallel fetch for preloading too
               const [boardResponse, commentsData] = await Promise.all([
-                axios.get(`${BACKEND}/api/boards/by-code/${board.code}`, { headers }),
-                axios.get(`${BACKEND}/api/comments/by-code/${board.code}?limit=50`, { headers })
+                getShared(`${BACKEND}/api/boards/by-code/${board.code}`, { headers }),
+                getShared(`${BACKEND}/api/comments/by-code/${board.code}?limit=50`, { headers })
               ]);
               const details = boardResponse.data as BoardDetails;
               const commentsResponseData = commentsData.data;
@@ -1032,6 +1062,15 @@ export default function BoardRoomPage() {
             return board;
           }
           found = true;
+          // The server's board-activity event for this exact message always arrives first and may
+          // since have been refreshed by an edit; don't let this later event put the old text back.
+          if (
+            board.lastCommentAt &&
+            normalized.createdAt &&
+            new Date(board.lastCommentAt).getTime() === new Date(normalized.createdAt).getTime()
+          ) {
+            return board;
+          }
           const updatedBoard: BoardSummary = {
             ...board,
             lastActivity: normalized.createdAt ?? board.lastActivity,
@@ -1118,6 +1157,10 @@ export default function BoardRoomPage() {
           return;
         }
         applyUnread(targetSnapshot.code, (count) => count + 1);
+        if (user && normalized.mentions?.includes(user.id)) {
+          const mentionedCode = targetSnapshot.code;
+          setMentionsByBoard((prev) => ({ ...prev, [mentionedCode]: (prev[mentionedCode] ?? 0) + 1 }));
+        }
       }
       updateLastReceived(targetCode, normalized.createdAt);
     };
@@ -1655,7 +1698,23 @@ export default function BoardRoomPage() {
   const handleSendMessage = useCallback(async () => {
     if (!user || !boardDetails || !boardDetails.id || !boardDetails.code) return;
     const trimmed = composerValue.trim();
-    if (!trimmed) return;
+    if (editing) {
+      const headers = getAuthHeaders();
+      if (!headers || !trimmed) return;
+      const target = editing;
+      try {
+        const res = await axios.patch(`${BACKEND}/api/messages/${target.id}`, { content: trimmed }, { headers });
+        setMessages((prev) =>
+          prev.map((m) => (m.id === target.id ? { ...m, message: res.data.message, editedAt: res.data.editedAt } : m))
+        );
+        setEditing(null);
+        setComposerValue("");
+      } catch (error: any) {
+        toast.error(error?.response?.data?.message ?? "Couldn't save the edit.");
+      }
+      return;
+    }
+    if (!trimmed && !pendingAttachment) return;
     // Members can send admin-only messages - no restriction needed
     const effectiveVisibility = visibility;
 
@@ -1711,6 +1770,11 @@ export default function BoardRoomPage() {
           return;
         }
         console.error("Failed to send message", error);
+        if (error?.response?.status === 429) {
+          toast.error("You're sending messages too fast. Wait a moment and retry.");
+        } else {
+          toast.error("Message not sent. Use Retry on the message.");
+        }
       }
     };
 
@@ -1732,9 +1796,19 @@ export default function BoardRoomPage() {
         senderId: user.id,
         userId: user.id,
         status: "sending",
+        parentId: replyingTo?.id ?? null,
+        replyTo: replyingTo,
+        attachment: pendingAttachment
+          ? { id: pendingAttachment.id, mime: pendingAttachment.mime, size: pendingAttachment.size }
+          : null,
       };
 
+      const outgoingParentId = replyingTo?.id;
+      const outgoingAttachmentId = pendingAttachment?.id;
       setComposerValue("");
+      setReplyingTo(null);
+      if (pendingAttachment) URL.revokeObjectURL(pendingAttachment.previewUrl);
+      setPendingAttachment(null);
       pendingMessagesRef.current.add(clientMessageId);
       setMessages((prev) => [...prev, optimistic]);
       updateLastReceived(boardDetails.code, createdAt);
@@ -1760,6 +1834,8 @@ export default function BoardRoomPage() {
             boardId: boardDetails.id,
             anonymous: anonymousMode,
             clientMessageId,
+            parentId: outgoingParentId,
+            attachmentId: outgoingAttachmentId,
           },
           headers
         );
@@ -1775,6 +1851,11 @@ export default function BoardRoomPage() {
           return;
         }
         console.error("Failed to send message", error);
+        if (error?.response?.status === 429) {
+          toast.error("You're sending messages too fast. Wait a moment and retry.");
+        } else {
+          toast.error("Message not sent. Use Retry on the message.");
+        }
       }
     };
 
@@ -1790,13 +1871,248 @@ export default function BoardRoomPage() {
     composerValue,
     getAuthHeaders,
     handleAuthFailure,
+    editing,
     isAdmin,
+    pendingAttachment,
+    replyingTo,
     updateBoardSummary,
     updateLastReceived,
     user,
     visibility,
   ]);
 
+
+  useEffect(() => {
+    const code = boardDetails?.code;
+    if (!code) return;
+    setMentionsByBoard((prev) => {
+      if (!prev[code]) return prev;
+      const next = { ...prev };
+      delete next[code];
+      return next;
+    });
+  }, [boardDetails?.code, setMentionsByBoard]);
+
+  const totalMentions = useMemo(() => Object.values(mentionsByBoard).reduce((a, b) => a + b, 0), [mentionsByBoard]);
+  useEffect(() => {
+    document.title = totalMentions > 0 ? `(${totalMentions}) @ TeamBoard` : "TeamBoard";
+  }, [totalMentions]);
+
+  const { typingNames, notifyTyping } = useTypingIndicator(boardDetails?.code, anonymousMode);
+
+  const handleComposerChange = useCallback(
+    (value: string) => {
+      setComposerValue(value);
+      notifyTyping(value);
+    },
+    [notifyTyping]
+  );
+
+  const handleRetryMessage = useCallback(
+    async (clientMessageId: string) => {
+      if (!boardDetails?.id) return;
+      const failed = messages.find((m) => m.clientMessageId === clientMessageId);
+      const headers = getAuthHeaders();
+      if (!failed || !headers) return;
+      pendingMessagesRef.current.add(clientMessageId);
+      setMessages((prev) =>
+        prev.map((m) => (m.clientMessageId === clientMessageId ? { ...m, status: "sending" } : m))
+      );
+      try {
+        // Same clientMessageId: the backend dedupes on (boardId, clientId), so a retry can't double-post.
+        await realtimeService.handleSend(
+          {
+            content: failed.message,
+            visibility: failed.visibility === "ADMIN_ONLY" ? "ADMIN_ONLY" : "EVERYONE",
+            boardId: boardDetails.id,
+            anonymous: failed.sender === "Anonymous",
+            clientMessageId,
+          },
+          headers
+        );
+      } catch (error: any) {
+        pendingMessagesRef.current.delete(clientMessageId);
+        setMessages((prev) =>
+          prev.map((m) => (m.clientMessageId === clientMessageId ? { ...m, status: "failed" } : m))
+        );
+        if (error?.response?.status === 401) {
+          handleAuthFailure();
+          return;
+        }
+        toast.error(error?.response?.status === 429 ? "Slow down a little, then retry." : "Still couldn't send. Check your connection.");
+      }
+    },
+    [boardDetails?.id, getAuthHeaders, handleAuthFailure, messages]
+  );
+
+  const authHeaders = useCallback(() => {
+    const token = localStorage.getItem("token");
+    return token ? { Authorization: `Bearer ${token}` } : undefined;
+  }, []);
+
+  // Photos are resized in the browser (256px, JPEG) so any camera picture fits the 256 KB server cap.
+  const handleUploadAvatar = useCallback(
+    async (file: File) => {
+      const headers = authHeaders();
+      if (!headers || !user) return;
+      if (!file.type.startsWith("image/")) {
+        toast.error("Pick an image file.");
+        return;
+      }
+      try {
+        const bitmap = await createImageBitmap(file);
+        const side = Math.min(bitmap.width, bitmap.height);
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 256;
+        canvas.getContext("2d")!.drawImage(bitmap, (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side, 0, 0, 256, 256);
+        const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+        if (!blob) throw new Error("encode failed");
+        await axios.put(`${BACKEND}/api/user/avatar`, blob, { headers: { ...headers, "Content-Type": "image/jpeg" } });
+        invalidateAvatar(user.id);
+        toast.success("Photo updated");
+      } catch (error: any) {
+        toast.error(error?.response?.data?.message ?? "Couldn't update your photo.");
+      }
+    },
+    [authHeaders, user]
+  );
+
+  // ---- Edit / delete ------------------------------------------------------------------------------
+  const handleEditMessage = useCallback((message: ChatMessage) => {
+    if (!message.id) return;
+    setReplyingTo(null);
+    setEditing({ id: message.id });
+    setComposerValue(message.message);
+  }, []);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditing(null);
+    setComposerValue("");
+  }, []);
+
+  const handleEditLast = useCallback(() => {
+    if (!user) return;
+    const last = [...messages]
+      .reverse()
+      .find((m) => m.id && !m.system && m.status !== "failed" && (m.userId === user.id || m.senderId === user.id));
+    if (last) handleEditMessage(last);
+  }, [messages, user, handleEditMessage]);
+
+  const handleConfirmDelete = useCallback(async () => {
+    const target = deleteTarget;
+    setDeleteTarget(null);
+    const headers = authHeaders();
+    if (!target || !headers) return;
+    try {
+      await axios.delete(`${BACKEND}/api/messages/${target.id}`, { headers });
+      setMessages((prev) => prev.filter((m) => m.id !== target.id));
+      if (editing?.id === target.id) handleCancelEdit();
+    } catch (error: any) {
+      toast.error(error?.response?.data?.message ?? "Couldn't delete the message.");
+    }
+  }, [deleteTarget, authHeaders, editing, handleCancelEdit]);
+
+  useEffect(() => {
+    const code = boardDetails?.code;
+    if (!code) return;
+    const onEdited = (p: { boardCode: string; id: string; message: string; editedAt: string | null; mentions?: string[] }) => {
+      if (p.boardCode !== code) return;
+      setMessages((prev) =>
+        prev.map((m) => (m.id === p.id ? { ...m, message: p.message, editedAt: p.editedAt, mentions: p.mentions ?? m.mentions } : m))
+      );
+    };
+    const onDeleted = (p: { boardCode: string; id: string }) => {
+      if (p.boardCode !== code) return;
+      setMessages((prev) => prev.filter((m) => m.id !== p.id));
+      setEditing((cur) => (cur?.id === p.id ? null : cur));
+    };
+    socketClient.on("message:edited", onEdited);
+    socketClient.on("message:deleted", onDeleted);
+    return () => {
+      socketClient.off("message:edited", onEdited);
+      socketClient.off("message:deleted", onDeleted);
+    };
+  }, [boardDetails?.code]);
+
+  // ---- Reactions ---------------------------------------------------------------------------------
+  const { reactionsById, toggleReaction: handleToggleReaction } = useReactions({
+    boardId: boardDetails?.id,
+    boardCode: boardDetails?.code,
+    messages,
+    authHeaders,
+  });
+
+  useEffect(() => {
+    setReplyingTo(null);
+  }, [boardDetails?.id]);
+
+
+  // ---- Replies + images ----------------------------------------------------------------------------
+  const handleReplyTo = useCallback((message: ChatMessage) => {
+    if (!message.id) return;
+    setReplyingTo({
+      id: message.id,
+      sender: message.sender,
+      snippet: message.message.trim().slice(0, 120) || "📷 Photo",
+    });
+  }, []);
+
+  const handleClearAttachment = useCallback(() => {
+    setPendingAttachment((prev) => {
+      if (prev) URL.revokeObjectURL(prev.previewUrl);
+      return null;
+    });
+  }, []);
+
+  const handlePickImage = useCallback(
+    async (file: File) => {
+      const headers = authHeaders();
+      if (!boardDetails?.id || !headers) return;
+      if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) {
+        toast.error("Only PNG, JPEG, WebP or GIF images can be shared.");
+        return;
+      }
+      if (file.size > 2 * 1024 * 1024) {
+        toast.error("That image is over 2 MB. Pick a smaller one.");
+        return;
+      }
+      setUploadingImage(true);
+      try {
+        const res = await axios.post(`${BACKEND}/api/boards/${boardDetails.id}/attachments`, file, {
+          headers: { ...headers, "Content-Type": file.type },
+        });
+        setPendingAttachment((prev) => {
+          if (prev) URL.revokeObjectURL(prev.previewUrl);
+          return { ...res.data, name: file.name, previewUrl: URL.createObjectURL(file) };
+        });
+      } catch (error: any) {
+        toast.error(error?.response?.data?.message ?? "Upload failed. Try again.");
+      } finally {
+        setUploadingImage(false);
+      }
+    },
+    [authHeaders, boardDetails?.id]
+  );
+
+  const seenBy = useReadReceipts({
+    boardId: boardDetails?.id,
+    boardCode: boardDetails?.code,
+    messages,
+    members: boardDetails?.members ?? [],
+    userId: user?.id,
+    readOnly,
+    authHeaders,
+  });
+
+  const mentionables = useMemo(
+    () =>
+      (boardDetails?.members ?? [])
+        .filter((m) => m.userId !== user?.id)
+        .map((m) => ({ id: m.userId, name: m.user.name })),
+    [boardDetails?.members, user?.id]
+  );
+  // Highlighting covers everyone (including you, so mentions of you stand out); suggestions exclude you.
+  const mentionNames = useMemo(() => (boardDetails?.members ?? []).map((m) => m.user.name), [boardDetails?.members]);
 
   const handleRetryComments = useCallback(async () => {
     if (!boardDetails?.id || !boardDetails.code) return;
@@ -1912,6 +2228,7 @@ export default function BoardRoomPage() {
       }
       const errorMessage = error?.response?.data?.message || "Unable to create board. Please try again.";
       setCreateBoardError(errorMessage);
+      toast.error(errorMessage);
       console.error("Unable to create board", error);
     }
   }, [createBoardName, getAuthHeaders, handleAuthFailure, loadBoards, navigate]);
@@ -1941,6 +2258,7 @@ export default function BoardRoomPage() {
       }
       const errorMessage = error?.response?.data?.message || "Unable to join board. Please check the code and try again.";
       setJoinBoardError(errorMessage);
+      toast.error(errorMessage);
       console.error("Unable to join board", error);
     }
   }, [getAuthHeaders, handleAuthFailure, joinCodeValue, debouncedLoadBoards, navigate]);
@@ -2161,7 +2479,7 @@ export default function BoardRoomPage() {
       if (boardDetails?.code === code) return;
       
       try {
-        const boardResponse = await axios.get(`${BACKEND}/api/boards/by-code/${code}`, { headers });
+        const boardResponse = await getShared(`${BACKEND}/api/boards/by-code/${code}`, { headers });
         const details = boardResponse.data as BoardDetails;
         // TASK 1.2: Reduced limit from 100 to 50 for faster first load
         const commentsData = await axios.get(`${BACKEND}/api/comments/${details.id}?limit=50`, { headers });
@@ -2285,7 +2603,11 @@ export default function BoardRoomPage() {
     const url = `${window.location.origin}/board/${code}`;
     navigator.clipboard
       .writeText(url)
-      .catch((error) => console.error("Failed to copy invite link", error));
+      .then(() => toast.success("Invite link copied"))
+      .catch((error) => {
+        console.error("Failed to copy invite link", error);
+        toast.error("Couldn't copy the link. Copy it from the address bar instead.");
+      });
   }, []);
 
   const handleLogout = useCallback(() => {
@@ -2329,32 +2651,87 @@ export default function BoardRoomPage() {
     ? "You left this board; history is read-only."
     : undefined;
 
+  // Stable identities so the memoized Sidebar / MessageList don't redraw on every composer keystroke.
+  const normalizedMessages = useMemo(() => messages.map((msg) => normalizeMessage(msg)), [messages]);
+  const handleRequestDelete = useCallback((m: ChatMessage) => {
+    if (m.id) setDeleteTarget({ id: m.id });
+  }, []);
+  const handleRequestLeave = useCallback(
+    (board: { id: string; code: string; name: string }) => setModal({ type: "leave", board }),
+    []
+  );
+  const handleOpenCreate = useCallback(() => setCreateDialogOpen(true), []);
+  const handleOpenJoin = useCallback(() => setJoinDialogOpen(true), []);
+
   const sidebarCommonProps = {
     boards: sidebarBoards,
     activeCode: boardDetails?.code ?? null,
     onSelectBoard: handleSelectBoard,
     onTogglePin: handleTogglePin,
     onHideBoard: handleHideBoard,
-    onLeaveBoard: (board: { id: string; code: string; name: string }) => setModal({ type: "leave", board }),
-    onCreateBoard: () => setCreateDialogOpen(true),
-    onJoinBoard: () => setJoinDialogOpen(true),
+    onLeaveBoard: handleRequestLeave,
+    onCreateBoard: handleOpenCreate,
+    onJoinBoard: handleOpenJoin,
     onLogout: handleLogout,
     unreadByBoard,
+    mentionsByBoard,
     showFooterActions: Boolean(boardDetails?.code),
     onPrefetchBoard: prefetchBoard,
     onBulkLeaveBoards: handleBulkLeaveBoards,
     onBulkDeleteBoards: handleBulkDeleteBoards,
   } as const;
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+        return;
+      }
+      const t = e.target as HTMLElement | null;
+      const typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+      if (e.key === "?" && !typing) {
+        e.preventDefault();
+        setShortcutsOpen(true);
+      } else if (e.key === "/" && !typing) {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const paletteCommands = useMemo<PaletteCommand[]>(
+    () => [
+      ...sidebarBoards.map((b) => ({
+        id: `board-${b.code}`,
+        label: b.name,
+        hint: b.code === boardDetails?.code ? "current" : b.code,
+        section: "Boards" as const,
+        run: () => handleSelectBoard(b.code),
+      })),
+      ...(boardDetails ? [{ id: "search", label: "Search messages in this board", hint: "/", section: "Actions" as const, run: () => setSearchOpen(true) }] : []),
+      { id: "create", label: "Create board", section: "Actions" as const, run: () => setCreateDialogOpen(true) },
+      { id: "join", label: "Join board with code", section: "Actions" as const, run: () => setJoinDialogOpen(true) },
+      { id: "shortcuts", label: "Keyboard shortcuts", hint: "?", section: "Actions" as const, run: () => setShortcutsOpen(true) },
+    ],
+    [sidebarBoards, boardDetails?.code, handleSelectBoard]
+  );
+
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-100">
+    <div className="flex h-dvh overflow-hidden bg-slate-100">
       {isInitialLoad && user ? (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-white">
           <div className="w-full max-w-md px-6">
-            <p className="mb-4 text-center text-sm text-slate-600">Loading your boards...</p>
-            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
+            <div className="mb-4 flex items-center justify-center gap-2 text-slate-900">
+              <span className="grid h-7 w-7 place-items-center rounded-lg bg-emerald-500/10 text-sm text-emerald-600">◆</span>
+              <span className="text-sm font-semibold tracking-tight">TeamBoard</span>
+            </div>
+            <p className="mb-4 text-center text-sm text-slate-500">Loading your boards…</p>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
               <div
-                className="h-full bg-emerald-500 transition-all duration-300"
+                className="h-full rounded-full bg-emerald-500 transition-all duration-300"
                 style={{ width: `${initialLoadProgress}%` }}
               />
             </div>
@@ -2373,26 +2750,20 @@ export default function BoardRoomPage() {
             }
           }}
           socketConnected={socketConnected}
+          onOpenPalette={() => setPaletteOpen(true)}
         />
 
         {boardDetails ? (
           <>
             {switchingBoard && switchingBoard !== boardDetails?.code ? (
               <div className="flex flex-1 flex-col items-center justify-center gap-4">
-                <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-300 border-t-emerald-500" />
-                <p className="text-sm text-slate-600">Loading board...</p>
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-emerald-500" />
+                <p className="text-sm text-slate-500">Loading board…</p>
               </div>
             ) : (
               <MessageList
                 key={boardDetails.code}
-                messages={messages.map((msg) => {
-                  const normalized = normalizeMessage(msg);
-                  // Debug: log if status is "sending" to see if it's being preserved
-                  if (msg.status === "sending" || msg.status === "sent") {
-                    console.log(`[rt] Message status in render: ${msg.id || msg.clientMessageId} = ${msg.status}`);
-                  }
-                  return normalized;
-                })}
+                messages={normalizedMessages}
                 isAdmin={isAdmin}
                 currentUserId={user?.id}
                 currentUserName={user?.name}
@@ -2400,6 +2771,15 @@ export default function BoardRoomPage() {
                 isLoadingOlder={loadingOlderMessages}
                 onLoadOlder={boardDetails.id ? handleLoadOlder : undefined}
                 hasMoreMessages={hasMoreMessages}
+                onRetryMessage={handleRetryMessage}
+                typingIndicator={typingNames}
+                reactionsById={reactionsById}
+                onToggleReaction={handleToggleReaction}
+                onReply={readOnly ? undefined : handleReplyTo}
+                mentionNames={mentionNames}
+                onEditMessage={readOnly ? undefined : handleEditMessage}
+                onDeleteMessage={readOnly ? undefined : handleRequestDelete}
+                seenBy={seenBy}
               />
             )}
 
@@ -2418,7 +2798,7 @@ export default function BoardRoomPage() {
 
             <ChatComposer
               value={composerValue}
-              onChange={setComposerValue}
+              onChange={handleComposerChange}
               onSend={handleSendMessage}
               anonymous={anonymousMode}
               onToggleAnonymous={setAnonymousMode}
@@ -2428,28 +2808,44 @@ export default function BoardRoomPage() {
               readOnly={readOnly}
               disabled={!user || readOnly}
               readOnlyMessage={readOnlyBanner}
+              replyingTo={replyingTo}
+              onCancelReply={() => setReplyingTo(null)}
+              attachment={pendingAttachment}
+              uploading={uploadingImage}
+              onPickImage={handlePickImage}
+              onClearAttachment={handleClearAttachment}
+              mentionables={mentionables}
+              editing={Boolean(editing)}
+              onCancelEdit={handleCancelEdit}
+              onEditLast={readOnly ? undefined : handleEditLast}
             />
           </>
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
-            <div>
-              <h2 className="text-3xl font-semibold text-slate-800">Welcome to TeamBoard</h2>
-              <p className="mt-2 text-sm text-slate-500">
+          <div className="relative flex flex-1 flex-col items-center justify-center gap-7 overflow-hidden px-6 text-center">
+            <div
+              className="pointer-events-none absolute inset-0"
+              style={{ background: 'var(--gradient-hero)' }}
+              aria-hidden
+            />
+            <div className="relative">
+              <span className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-2xl bg-emerald-500/10 text-2xl text-emerald-600">◆</span>
+              <h2 className="text-balance text-3xl font-semibold tracking-tight text-slate-900">Welcome to TeamBoard</h2>
+              <p className="mx-auto mt-2 max-w-sm text-sm text-slate-500">
                 Create a new board or join one with a code to get started.
               </p>
             </div>
-            <div className="flex flex-wrap justify-center gap-4">
+            <div className="relative flex flex-wrap justify-center gap-3">
               <button
                 type="button"
                 onClick={() => setCreateDialogOpen(true)}
-                className="rounded-full bg-emerald-500 px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-emerald-600"
+                className="rounded-xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-white shadow-[0_10px_24px_-8px_rgba(16,185,129,0.55)] transition hover:-translate-y-0.5 hover:bg-emerald-600 active:translate-y-0"
               >
                 Create board
               </button>
               <button
                 type="button"
                 onClick={() => setJoinDialogOpen(true)}
-                className="rounded-full border border-emerald-500 px-5 py-3 text-sm font-semibold text-emerald-600 transition hover:bg-emerald-50"
+                className="rounded-xl border border-emerald-500/40 bg-white px-5 py-3 text-sm font-semibold text-emerald-600 transition hover:-translate-y-0.5 hover:border-emerald-500 hover:bg-emerald-50 active:translate-y-0"
               >
                 Join with code
               </button>
@@ -2458,11 +2854,26 @@ export default function BoardRoomPage() {
         )}
       </main>
 
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={paletteCommands} />
+      <ConfirmModal
+        open={Boolean(deleteTarget)}
+        title="Delete this message?"
+        description="It will be removed for everyone on this board. This can't be undone."
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
+      <SearchDialog open={searchOpen} boardId={boardDetails?.id} boardName={boardDetails?.name} onClose={() => setSearchOpen(false)} />
+      <ShortcutsSheet open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+
       <RightPanel
         board={boardDetails}
         isReadOnly={readOnly}
         onCopyInvite={handleCopyInvite}
         isVisible={Boolean(boardDetails)}
+        currentUserId={user?.id}
+        onUploadAvatar={handleUploadAvatar}
       />
 
       {isSidebarOpen ? (
@@ -2489,6 +2900,8 @@ export default function BoardRoomPage() {
               isVisible
               variant="mobile"
               onClose={() => setRightPanelOpen(false)}
+              currentUserId={user?.id}
+              onUploadAvatar={handleUploadAvatar}
             />
           </div>
         </div>
@@ -2612,14 +3025,17 @@ const InputDialog = ({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/70 px-4 py-6" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 px-4 py-6 backdrop-blur-sm animate-[fadeIn_0.15s_ease-out]"
+      onClick={onClose}
+    >
       <div
-        className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+        className="w-full max-w-md rounded-2xl border border-black/5 bg-white p-6 shadow-2xl"
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
       >
-        <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
+        <h2 className="text-lg font-semibold tracking-tight text-slate-900">{title}</h2>
         <input
           autoFocus
           value={value}
@@ -2633,10 +3049,10 @@ const InputDialog = ({
             }
           }}
           placeholder={placeholder}
-          className={`mt-4 w-full rounded-xl border px-4 py-2 text-sm focus:outline-none focus:ring-2 ${
+          className={`mt-4 w-full rounded-xl border bg-slate-50 px-4 py-2.5 text-sm transition-colors focus:bg-white focus:outline-none focus:ring-2 ${
             error
               ? "border-red-300 focus:border-red-500 focus:ring-red-200"
-              : "border-slate-200 focus:border-emerald-500 focus:ring-emerald-200"
+              : "border-slate-200 focus:border-emerald-400 focus:ring-emerald-200"
           }`}
         />
         {error ? (
@@ -2646,7 +3062,7 @@ const InputDialog = ({
           <button
             type="button"
             onClick={onClose}
-            className="order-1 w-full rounded-full border border-emerald-500 px-4 py-2 text-sm font-semibold text-emerald-600 transition hover:bg-emerald-50 sm:order-none sm:w-auto"
+            className="order-1 w-full rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 sm:order-none sm:w-auto"
           >
             Cancel
           </button>
@@ -2654,7 +3070,7 @@ const InputDialog = ({
             type="button"
             onClick={onSubmit}
             disabled={!value.trim()}
-            className="w-full rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-emerald-300 sm:w-auto"
+            className="w-full rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white shadow-[0_6px_16px_-6px_rgba(16,185,129,0.6)] transition hover:bg-emerald-600 active:scale-95 disabled:cursor-not-allowed disabled:bg-emerald-300 disabled:shadow-none sm:w-auto"
           >
             {confirmLabel}
           </button>
