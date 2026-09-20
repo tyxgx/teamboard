@@ -25,3 +25,7 @@ services:
         sync: false
       - key: FRONTEND_ORIGIN
         sync: false
+      # Direct/session-mode Supabase connection (port 5432) used only for `prisma migrate deploy`.
+      # The pooled DATABASE_URL (port 6543) makes migrate hang.
+      - key: DIRECT_URL
+        sync: false

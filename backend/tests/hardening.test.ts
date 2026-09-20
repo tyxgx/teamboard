@@ -72,3 +72,11 @@ describe('HTTP hardening', () => {
     expect(last).toBe(429);
   });
 });
+
+describe('start script', () => {
+  it('is wired as the npm start entrypoint', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pkg = require('../package.json');
+    expect(pkg.scripts.start).toBe('node bin/start.js');
+  });
+});
