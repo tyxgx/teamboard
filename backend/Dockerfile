@@ -17,6 +17,7 @@ COPY package*.json ./
 COPY prisma ./prisma
 RUN npm ci --omit=dev && npx prisma generate
 COPY --from=build /app/dist ./dist
+COPY bin ./bin
 USER node
 EXPOSE 5001
 # `npm start` applies pending Prisma migrations, then runs dist/server.js (the file that actually listens).
