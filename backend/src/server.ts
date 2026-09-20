@@ -1,8 +1,16 @@
 // server.ts
-import http from "http";
-import app from "./index";
-import { setupSocket } from "./sockets/socket"; // 👈 imported from our new file
-import { prisma } from "./db/client";
+import http from 'http';
+import app from './index';
+import { setupSocket } from './sockets/socket'; // 👈 imported from our new file
+import { prisma } from './db/client';
+import { checkConfig } from './config';
+
+const config = checkConfig();
+config.warnings.forEach((w) => console.warn(`⚠️ ${w}`));
+if (config.errors.length > 0) {
+  config.errors.forEach((e) => console.error(`❌ ${e}`));
+  process.exit(1);
+}
 
 const PORT = process.env.PORT || 5001;
 const server = http.createServer(app);
@@ -36,7 +44,8 @@ process.on('uncaughtException', (error) => {
 });
 
 // Test database connection on startup
-prisma.$connect()
+prisma
+  .$connect()
   .then(() => {
     console.log('✅ Database connected');
   })
@@ -53,26 +62,43 @@ server.listen(PORT, () => {
 
 // Uploaded-but-never-sent images are removed after an hour so abandoned uploads don't pile up in Postgres.
 const ORPHAN_MAX_AGE_MS = 60 * 60 * 1000;
-const orphanSweep = setInterval(async () => {
-  try {
-    const { count } = await prisma.attachment.deleteMany({
-      where: { commentId: null, createdAt: { lt: new Date(Date.now() - ORPHAN_MAX_AGE_MS) } },
-    });
-    if (count > 0) console.log(`🧹 Removed ${count} unsent image upload(s)`);
-  } catch (error) {
-    console.error('Orphan attachment sweep failed', error);
-  }
-}, 15 * 60 * 1000);
+const orphanSweep = setInterval(
+  async () => {
+    try {
+      const { count } = await prisma.attachment.deleteMany({
+        where: { commentId: null, createdAt: { lt: new Date(Date.now() - ORPHAN_MAX_AGE_MS) } },
+      });
+      if (count > 0) console.log(`🧹 Removed ${count} unsent image upload(s)`);
+    } catch (error) {
+      console.error('Orphan attachment sweep failed', error);
+    }
+  },
+  15 * 60 * 1000
+);
 orphanSweep.unref();
 
-// Keep process alive and handle graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
+// Graceful shutdown on both SIGTERM (Render deploys/stops) and SIGINT (Ctrl+C). If open sockets keep
+// server.close() from finishing, force the exit after 10s so a deploy is never stuck on the old instance.
+let shuttingDown = false;
+function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`${signal} received, shutting down gracefully`);
+  const force = setTimeout(() => {
+    console.error('Shutdown timed out, forcing exit');
+    process.exit(1);
+  }, 10_000);
+  force.unref();
   server.close(() => {
     console.log('Server closed');
-    prisma.$disconnect().then(() => {
-      console.log('Database disconnected');
-      process.exit(0);
-    });
+    prisma
+      .$disconnect()
+      .catch(() => undefined)
+      .then(() => {
+        console.log('Database disconnected');
+        process.exit(0);
+      });
   });
-});
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
