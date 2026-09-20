@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import compression from 'compression';
+import helmet from 'helmet';
 // no fs logging of envs in production
 import { swaggerUi, swaggerSpec } from './swagger';
 import testRoutes from './routes/test'; // ✅ ADD this line
@@ -19,8 +20,13 @@ import commentRoutes from './routes/comment.routes';
 import userRoutes from './routes/user.routes';
 import engagementRoutes from './routes/engagement.routes';
 import prisma from './db/client';
+import { rateLimit } from './middlewares/rateLimit';
 
 const app = express();
+
+// Render (and most hosts) terminate TLS at a proxy; without this every client looks like one IP
+// and per-IP rate limiting would throttle everybody together.
+app.set('trust proxy', 1);
 
 // Restrict CORS via env; default to permissive for local dev
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || '*';
@@ -29,6 +35,11 @@ app.use(
     origin: FRONTEND_ORIGIN === '*' ? true : FRONTEND_ORIGIN.split(',').map((s) => s.trim()),
     credentials: true,
   })
+);
+// crossOriginResourcePolicy must allow cross-origin: the frontend loads avatars/attachments from this API.
+// CSP is left off: this is a JSON API (the only HTML is the Swagger UI, which needs inline scripts).
+app.use(
+  helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' }, contentSecurityPolicy: false })
 );
 app.use(compression());
 app.use(express.json());
@@ -43,7 +54,9 @@ app.get('/', (req: Request, res: Response) => {
 app.get('/health', async (req: Request, res: Response) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
-    res.set('Cache-Control', 'no-store').json({ status: 'ok', db: 'up' });
+    res
+      .set('Cache-Control', 'no-store')
+      .json({ status: 'ok', db: 'up', uptime: Math.round(process.uptime()) });
   } catch {
     res.status(503).set('Cache-Control', 'no-store').json({ status: 'error', db: 'down' });
   }
@@ -74,7 +87,16 @@ app.get('/api/comments/by-code/:boardCode', (req: Request, res: Response, next: 
 });
 
 // ✅ Route registrations
-app.use('/api/auth', authRoutes);
+// Login is the only unauthenticated write endpoint: cap it per IP to blunt token-guessing/abuse.
+app.use(
+  '/api/auth',
+  rateLimit({
+    windowMs: 60_000,
+    max: Number(process.env.AUTH_RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'test' ? 10_000 : 30),
+    name: 'login',
+  }),
+  authRoutes
+);
 app.use('/api/boards', boardRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/user', userRoutes);
