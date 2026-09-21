@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { postWithWakeRetry } from '../api/wake';
 import { GoogleLogin, type CredentialResponse } from '@react-oauth/google';
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL as string;
@@ -311,8 +312,8 @@ export default function Landing() {
       setAuthenticating(true);
       setAuthError(null);
       const idToken = response.credential;
-      const res = await axios.post(`${BACKEND}/api/auth/google`, { idToken });
-      const token = res.data.token;
+      const data = await postWithWakeRetry<{ token: string }>(`${BACKEND}/api/auth/google`, { idToken });
+      const token = data.token;
       localStorage.setItem('token', token);
       const me = await axios.get(`${BACKEND}/api/test-auth`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -344,6 +345,17 @@ export default function Landing() {
     }
   }, [user, navigate]);
 
+  // Free-tier backend may still be waking up: explain the wait instead of looking frozen
+  const [slowAuth, setSlowAuth] = useState(false);
+  useEffect(() => {
+    if (!authenticating) {
+      setSlowAuth(false);
+      return;
+    }
+    const t = setTimeout(() => setSlowAuth(true), 4000);
+    return () => clearTimeout(t);
+  }, [authenticating]);
+
   // Show loading state during auth
   if (authenticating) {
     return (
@@ -351,6 +363,11 @@ export default function Landing() {
         <div className="text-center">
           <div className="h-12 w-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
           <p style={{ color: 'var(--color-text-secondary)' }}>Signing in…</p>
+          {slowAuth && (
+            <p className="mt-2 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              Waking up the server (free hosting) — this can take up to a minute the first time.
+            </p>
+          )}
         </div>
       </main>
     );

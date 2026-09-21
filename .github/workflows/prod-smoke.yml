@@ -1,0 +1,27 @@
+name: Prod smoke test
+
+on:
+  schedule:
+    - cron: "17 3 * * *"   # daily; a failure emails the repo owner
+  workflow_dispatch: {}
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Backend wakes and DB is up (free tier can take ~60 s)
+        run: |
+          for i in $(seq 1 12); do
+            out=$(curl -s --max-time 30 https://teamboard-gees.onrender.com/health) && echo "$out" | grep -q '"db":"up"' && { echo "$out"; exit 0; }
+            echo "attempt $i: not ready yet ($out)"; sleep 10
+          done
+          echo "backend never became healthy"; exit 1
+      - name: Auth-protected routes exist and reject anonymous callers (401, not 404)
+        run: |
+          for path in /api/boards /api/test-auth; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 "https://teamboard-gees.onrender.com$path")
+            echo "$path -> $code"; [ "$code" = 401 ] || exit 1
+          done
+      - name: Frontend is served and is the real app
+        run: |
+          curl -sf --max-time 30 https://teamboard-delta.vercel.app/ | grep -qi "<title>TeamBoard" 

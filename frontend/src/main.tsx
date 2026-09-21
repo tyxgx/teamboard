@@ -9,7 +9,10 @@ import Landing from "./pages/Landing";
 import NotFound from "./pages/NotFound";
 import { ErrorBoundary } from "./components/ui/ErrorBoundary";
 import { Toaster } from "sonner";
+import { wakeBackend } from "./api/wake";
 import "./index.css";
+
+wakeBackend(); // start waking the free-tier backend while the page renders
 
 // TASK 3.1: Loading skeleton for lazy-loaded components
 const LoadingSkeleton = () => (
